@@ -36,6 +36,9 @@ ENV_MAP = {
     "cache_ttl": "DASHBOARD_CACHE_TTL",
     "mock": "DASHBOARD_MOCK",
     "indexes": "TRAFFIC_INDEXES",
+    "index_include": "TRAFFIC_INDEX_INCLUDE",
+    "index_exclude": "TRAFFIC_INDEX_EXCLUDE",
+    "index_rescan_minutes": "INDEX_RESCAN_MINUTES",
 }
 
 DEFAULTS: dict[str, Any] = {
@@ -48,12 +51,18 @@ DEFAULTS: dict[str, Any] = {
     "port": 8091,
     "cache_ttl": 300,
     "mock": False,
-    "indexes": [],  # [] = track every non-internal index the credential can see
+    "indexes": [],  # [] = auto-discovery mode: track matching non-internal indexes
+    "index_include": [],  # glob patterns; empty = all discovered non-internal indexes
+    "index_exclude": [],  # glob patterns subtracted after include; _* always excluded
+    "index_rescan_minutes": 10,  # background re-discovery cadence; 0 = off
+    "indexes_seen": [],  # last known index set (written by the scanner, not by users)
 }
 
 TRUTHY = ("1", "true", "yes", "on")
 _BOOL_KEYS = ("verify_certs", "mock")
-_INT_RANGES = {"port": (1, 65535), "cache_ttl": (30, 86400)}
+_INT_RANGES = {"port": (1, 65535), "cache_ttl": (30, 86400),
+               "index_rescan_minutes": (0, 1440)}
+_LIST_KEYS = ("indexes", "index_include", "index_exclude", "indexes_seen")
 _SECRET_KEYS = ("splunk_token", "splunk_password")
 
 
@@ -67,7 +76,7 @@ def _coerce(key: str, raw: Any) -> Any:
             return int(s)
         except ValueError:
             return DEFAULTS[key]
-    if key == "indexes":
+    if key in _LIST_KEYS:
         try:
             v = json.loads(s)
             return [str(i) for i in v] if isinstance(v, list) else DEFAULTS[key]
@@ -81,6 +90,7 @@ class RuntimeConfig:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._io_lock = threading.Lock()  # serializes config.json read-merge-write
         self._data: dict[str, Any] = dict(DEFAULTS)
         self._env_keys: set[str] = set()
         self.reload()
@@ -139,7 +149,8 @@ class RuntimeConfig:
         """Stable id of connection + tracked indexes (salt for cache keys)."""
         d = self.as_dict()
         cred = "token" if d["splunk_token"] else "basic"
-        blob = "|".join([d["splunk_url"], cred, ",".join(d["indexes"])])
+        blob = "|".join([d["splunk_url"], cred, ",".join(d["indexes"]),
+                         ",".join(d["index_include"]), ",".join(d["index_exclude"])])
         return hashlib.sha1(blob.encode()).hexdigest()[:10]
 
     def masked(self) -> dict:
@@ -164,17 +175,18 @@ class RuntimeConfig:
         non-empty string = replace. Returns the new effective config.
         """
         clean = self._validate(changes or {})
-        saved: dict[str, Any] = {}
-        if CONFIG_FILE.exists():
-            try:
-                saved = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            except Exception:
-                saved = {}
-        saved.update(clean)
-        tmp = CONFIG_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(CONFIG_FILE)
-        self.reload()
+        with self._io_lock:
+            saved: dict[str, Any] = {}
+            if CONFIG_FILE.exists():
+                try:
+                    saved = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+                except Exception:
+                    saved = {}
+            saved.update(clean)
+            tmp = CONFIG_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(CONFIG_FILE)
+            self.reload()
         return self.as_dict()
 
     @staticmethod
@@ -197,10 +209,10 @@ class RuntimeConfig:
                 if not lo <= iv <= hi:
                     raise ValueError(f"{key} must be between {lo} and {hi}")
                 out[key] = iv
-            elif key == "indexes":
+            elif key in _LIST_KEYS:
                 if not isinstance(val, list) or not all(
                         isinstance(i, str) and i.strip() for i in val):
-                    raise ValueError("indexes must be a list of non-empty strings")
+                    raise ValueError(f"{key} must be a list of non-empty strings")
                 seen: set = set()
                 uniq: list[str] = []
                 for i in val:

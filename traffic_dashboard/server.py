@@ -25,7 +25,9 @@ import random
 import re
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +48,16 @@ CONFIG = RuntimeConfig()
 CACHE_FILE = ROOT / "cache.json"
 GB = 1024.0 ** 3
 
-app = FastAPI(title="Splunk traffic dashboard")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Start the background index auto-discovery scanner with the server."""
+    threading.Thread(target=_index_scanner_loop, daemon=True,
+                     name="index-scanner").start()
+    yield
+
+
+app = FastAPI(title="Splunk traffic dashboard", lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -170,10 +181,10 @@ def discover_indexes(overrides: dict | None = None, force: bool = False) -> list
             names = sorted(r["index"] for r in rows
                            if not str(r.get("index", "")).startswith("_"))
         except Exception as e:  # noqa: BLE001
-            raise RuntimeError(f"索引列表获取失败：{e or err}")
+            raise RuntimeError(f"索引列表获取失败：{_friendly_conn_error(e)}")
 
     if not names and err:
-        raise RuntimeError(f"索引列表获取失败：{err}")
+        raise RuntimeError(f"索引列表获取失败：{_friendly_conn_error(err)}")
     if not overrides:
         with _IDX_LOCK:
             _IDX_CACHE["ts"], _IDX_CACHE["names"] = time.time(), names
@@ -181,14 +192,84 @@ def discover_indexes(overrides: dict | None = None, force: bool = False) -> list
 
 
 def effective_indexes() -> list[str]:
-    """Tracked indexes: the configured list, or every non-internal index the
-    credential can see when the list is empty. Demo set when unconfigured."""
+    """Tracked indexes: the configured list (manual mode), or the discovered
+    indexes filtered by the include/exclude globs (auto-discovery mode).
+    Demo set when unconfigured."""
     idx = list(CONFIG.get("indexes") or [])
     if idx:
         return idx
     if CONFIG.credentials_present():
-        return discover_indexes()
+        d = CONFIG.as_dict()
+        return filter_indexes(discover_indexes(), d["index_include"], d["index_exclude"])
     return list(DEMO_INDEXES)
+
+
+def filter_indexes(names: list[str], include: list[str], exclude: list[str]) -> list[str]:
+    """Auto-mode glob filter: keep names matching include (empty = all),
+    drop names matching exclude. Internal _* never reaches this list."""
+    out = []
+    for n in names:
+        if include and not any(fnmatch(n, p) for p in include):
+            continue
+        if any(fnmatch(n, p) for p in exclude):
+            continue
+        out.append(n)
+    return out
+
+
+def _friendly_conn_error(e: Exception) -> str:
+    s = str(e)
+    low = s.lower()
+    if "connect" in low or "getaddrinfo" in low or "timed out" in low or "ssl" in low:
+        return "Splunk 暂不可达（请检查地址 / 8089 端口 / 防火墙；自签名证书请关闭证书校验）"
+    return s[:180]
+
+
+def index_status() -> dict:
+    """Snapshot for the UI: tracked vs available indexes + newly appeared."""
+    d = CONFIG.as_dict()
+    mode = "manual" if d["indexes"] else "auto"
+    tracked = list(d["indexes"])
+    if not CONFIG.credentials_present():
+        return {"ok": False, "configured": False, "mode": mode, "tracked": tracked,
+                "available": [], "new": [], "last_scan_ts": _IDX_CACHE["ts"],
+                "rescan_minutes": d["index_rescan_minutes"], "message": "尚未配置 Splunk 连接"}
+    try:
+        available = discover_indexes()
+    except Exception as e:  # noqa: BLE001 - surface as status, not a 500
+        return {"ok": False, "configured": True, "mode": mode, "tracked": tracked,
+                "available": [], "new": [], "last_scan_ts": _IDX_CACHE["ts"],
+                "rescan_minutes": d["index_rescan_minutes"],
+                "message": f"自动发现失败：{_friendly_conn_error(e)}"}
+    if mode == "auto":
+        tracked = filter_indexes(available, d["index_include"], d["index_exclude"])
+    seen = set(d.get("indexes_seen") or [])
+    new = sorted(n for n in available if seen and n not in seen)
+    return {"ok": True, "configured": True, "mode": mode, "tracked": tracked,
+            "available": available, "new": new, "last_scan_ts": _IDX_CACHE["ts"],
+            "rescan_minutes": d["index_rescan_minutes"]}
+
+
+def _index_scan_once() -> None:
+    """Re-discover indexes and record newly appeared ones (vs the seen set)."""
+    names = discover_indexes(force=True)
+    seen = set(CONFIG.get("indexes_seen") or [])
+    fresh = [n for n in names if n not in seen]
+    if seen and fresh:
+        log.info("index auto-discovery: new indexes appeared: %s", ", ".join(fresh))
+    if fresh or not seen:
+        CONFIG.update({"indexes_seen": names})
+
+
+def _index_scanner_loop() -> None:
+    while True:
+        minutes = int(CONFIG.get("index_rescan_minutes"))
+        try:
+            if minutes > 0 and CONFIG.credentials_present():
+                _index_scan_once()
+        except Exception:
+            log.warning("index rescan failed (will retry next cycle)", exc_info=True)
+        time.sleep(max(60, minutes * 60) if minutes > 0 else 300)
 
 
 def _f(v: Any) -> float:
@@ -573,6 +654,11 @@ def api_indexes_discover(payload: dict | None = None) -> dict:
         return {"ok": True, "indexes": names}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": str(e)[:300]}
+
+
+@app.get("/api/indexes/status")
+def api_indexes_status() -> dict:
+    return index_status()
 
 
 @app.get("/api/health")

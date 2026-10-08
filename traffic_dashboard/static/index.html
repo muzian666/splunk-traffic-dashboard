@@ -47,6 +47,7 @@ header{
 .chip b{color:var(--text);font-weight:600}
 .chip.mock{color:#fde68a;border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.08)}
 .chip.stale{color:#fca5a5;border-color:rgba(248,113,113,.35);background:rgba(248,113,113,.08)}
+.chip.newidx{color:#0e7490;border-color:rgba(8,145,178,.45);background:rgba(8,145,178,.10);cursor:pointer}
 .btn{
   border:1px solid var(--card-border);background:var(--card);color:var(--text);
   padding:7px 14px;border-radius:10px;font-size:13px;cursor:pointer;transition:.15s;
@@ -218,6 +219,7 @@ fieldset.wsec legend{font-size:13px;font-weight:700;padding:0 6px;color:var(--te
   <span class="chip" id="chipWhen">数据时间 —</span>
   <span class="chip mock hidden" id="chipMock" style="display:none">演示数据模式</span>
   <span class="chip stale hidden" id="chipStale" style="display:none">Splunk 暂不可达 · 显示上次缓存</span>
+  <span class="chip newidx" id="chipNewIdx" style="display:none" title="Splunk 上出现了新的索引，点击前往设置">🆕 新索引</span>
   <button class="btn" id="btnRefresh" title="立即重新查询 Splunk">↻ 刷新</button>
   <button class="btn primary" id="btnCsv">⬇ 导出 CSV</button>
   <button class="btn" id="btnSettings" title="Splunk 连接与看板设置">⚙ 设置</button>
@@ -378,6 +380,7 @@ fieldset.wsec legend{font-size:13px;font-weight:700;padding:0 6px;color:var(--te
         <label><input type="radio" name="wizIdxMode" value="auto" checked> 全部非内部索引（自动发现）</label>
         <label><input type="radio" name="wizIdxMode" value="manual"> 手动选择</label>
       </div>
+      <div class="fhint" style="margin-bottom:8px">自动模式会后台定期重扫、新索引自动纳入统计；需要按名称过滤（如只统计 prod_*）可在保存后到 ⚙ 设置中配置包含/排除模式。</div>
       <div class="idxbox" id="wizIdxBox" style="display:none">
         <div class="acts" style="display:flex;gap:14px;margin-bottom:8px;font-size:12px"><a id="wizIdxAll">全选</a><a id="wizIdxNone">清空</a></div>
         <div class="chips" id="wizIdxChips"><span class="fhint">点击“加载索引列表”后在这里勾选</span></div>
@@ -441,9 +444,28 @@ fieldset.wsec legend{font-size:13px;font-weight:700;padding:0 6px;color:var(--te
         <button class="btn" id="setLoadIdx" type="button">↻ 从 Splunk 加载索引列表</button>
         <span class="tmsg" id="setIdxMsg"></span>
       </div>
+      <div class="fhint" id="setIdxStatus" style="margin:2px 0 8px"></div>
       <div class="radio">
-        <label><input type="radio" name="setIdxMode" value="auto"> 全部非内部索引（自动发现）</label>
+        <label><input type="radio" name="setIdxMode" value="auto"> 自动发现（可用下方模式过滤）</label>
         <label><input type="radio" name="setIdxMode" value="manual"> 手动选择</label>
+        <label id="setAddNewWrap" style="display:none">｜ <a id="setAddNew">🆕 一键跟踪全部新索引</a></label>
+      </div>
+      <div class="frow" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div>
+          <label>包含模式（自动模式生效）</label>
+          <input class="fi" id="setInc" placeholder="如 prod_*, network_*（留空 = 全部）" autocomplete="off" spellcheck="false">
+          <div class="fhint">逗号分隔的通配符，仅跟踪匹配的索引</div>
+        </div>
+        <div>
+          <label>排除模式</label>
+          <input class="fi" id="setExc" placeholder="如 test_*, summary_*（可选）" autocomplete="off" spellcheck="false">
+          <div class="fhint">匹配的索引将被排除；内部 _* 始终排除</div>
+        </div>
+      </div>
+      <div class="frow" style="max-width:300px">
+        <label>后台自动重扫间隔（分钟，0 = 关闭）</label>
+        <input class="fi" id="setRescan" type="number" min="0" max="1440">
+        <div class="fhint">后台定期重新发现索引，新索引会顶栏提醒</div>
       </div>
       <div class="idxbox" id="setIdxBox" style="display:none">
         <div class="acts" style="display:flex;gap:14px;margin-bottom:8px;font-size:12px"><a id="setIdxAll">全选</a><a id="setIdxNone">清空</a></div>
@@ -794,10 +816,10 @@ $("idxNone").onclick=()=>{sel=new Set([DATA.indexes[0]]);renderFilters();renderA
 $("btnRefresh").onclick=()=>loadRange(CUR.kind==="custom"?CUR:rangeFor(CUR.kind),true);
 $("btnCsv").onclick=exportCSV;
 let rz;window.onresize=()=>{clearTimeout(rz);rz=setTimeout(()=>Object.values(charts).forEach(c=>c.resize()),120)};
-setInterval(()=>{if(!CUR)return;const r=CUR.kind==="custom"?CUR:rangeFor(CUR.kind);if(r)loadRange(r,false)},5*60*1000);
+setInterval(()=>{refreshIdxStatus();if(!CUR)return;const r=CUR.kind==="custom"?CUR:rangeFor(CUR.kind);if(r)loadRange(r,false)},5*60*1000);
 
 /* ---------------- config: setup wizard + settings ---------------- */
-let CFG=null;
+let CFG=null,IDXST=null;
 const isLocked=k=>(CFG&&CFG.locked||[]).includes(k);
 function lockIf(inp,k){if(isLocked(k)){inp.disabled=true;inp.title="该值来自 .env / 环境变量，优先于页面设置；如需修改请先从 .env 中删除对应条目"}}
 async function apiPost(url,body){
@@ -843,6 +865,25 @@ function wireAuthTabs(rootId){
     b.classList.add("on");
     $(rootId).querySelectorAll(".apane").forEach(p=>p.style.display=p.dataset.m===b.dataset.m?"":"none")})}
 function idxMode(name){return document.querySelector(`input[name="${name}"]:checked`).value}
+const parsePatterns=el=>el.value.split(/[,\s]+/).map(s=>s.trim()).filter(Boolean);
+
+/* ---- index auto-discovery status ---- */
+function idxStatusText(s){
+  if(!s)return"";
+  if(!s.ok)return `⚠ ${s.message||"自动发现不可用"}（仍可手动加载索引列表）`;
+  const t=s.last_scan_ts?`${Math.max(0,Math.round((Date.now()/1000-s.last_scan_ts)/60))} 分钟前`:"尚未扫描";
+  let txt=`上次发现：${t} · 凭据可见 ${s.available.length} 个 · 当前跟踪 ${s.tracked.length} 个（${s.mode==="auto"?"自动":"手动"}）`;
+  if(s.new&&s.new.length)txt+=` · 🆕 新出现 ${s.new.length} 个`;
+  return txt}
+async function refreshIdxStatus(){
+  if(!CFG||!CFG.configured){$("chipNewIdx").style.display="none";return}
+  try{IDXST=await(await fetch("/api/indexes/status")).json()}catch(e){IDXST=null}
+  const n=IDXST&&IDXST.new?IDXST.new.length:0;
+  $("chipNewIdx").style.display=n?"":"none";
+  if(n)$("chipNewIdx").textContent=`🆕 ${n} 个新索引`;
+  if($("setMask").style.display!=="none"){
+    $("setIdxStatus").textContent=idxStatusText(IDXST);
+    $("setAddNewWrap").style.display=n?"":"none"}}
 function manualAdd(manualEl,allArr,selSet,box){
   manualEl.value.split(/[,\s]+/).map(s=>s.trim()).filter(Boolean).forEach(i=>{
     if(!allArr.includes(i))allArr.push(i);
@@ -907,14 +948,20 @@ function openSettings(){
   $("setTtl").value=CFG.cache_ttl;
   $("setMock").checked=!!CFG.mock;
   $("setHostPort").value=`${CFG.host}:${CFG.port}（修改：.env 中 DASHBOARD_HOST / DASHBOARD_PORT）`;
+  $("setInc").value=(CFG.index_include||[]).join(", ");
+  $("setExc").value=(CFG.index_exclude||[]).join(", ");
+  $("setRescan").value=CFG.index_rescan_minutes;
   $("setTestMsg").textContent="";$("setIdxMsg").textContent="";
   lockIf($("setUrl"),"splunk_url");lockIf($("setToken"),"splunk_token");
   lockIf($("setUser"),"splunk_username");lockIf($("setPass"),"splunk_password");
   lockIf($("setTtl"),"cache_ttl");lockIf($("setMock"),"mock");
+  lockIf($("setInc"),"index_include");lockIf($("setExc"),"index_exclude");
+  lockIf($("setRescan"),"index_rescan_minutes");
   setAll=(CFG.indexes||[]).slice();setIdx=new Set(CFG.indexes||[]);
   document.querySelector(`input[name="setIdxMode"][value="${setAll.length?"manual":"auto"}"]`).checked=true;
   $("setIdxBox").style.display="block";
   renderIdxChips($("setIdxChips"),setAll,setIdx);
+  refreshIdxStatus();
   showSet(true)}
 function wireSettings(){
   $("btnSettings").onclick=openSettings;
@@ -932,11 +979,22 @@ function wireSettings(){
   $("setIdxNone").onclick=()=>{setIdx.clear();renderIdxChips($("setIdxChips"),setAll,setIdx)};
   $("setManualAdd").onclick=()=>manualAdd($("setManual"),setAll,setIdx,$("setIdxChips"));
   $("setRewiz").onclick=()=>{showSet(false);wizStep(1);showSetup(true)};
+  $("chipNewIdx").onclick=()=>openSettings();
+  $("setAddNew").onclick=async()=>{
+    await refreshIdxStatus();
+    if(!IDXST||!IDXST.new||!IDXST.new.length)return;
+    IDXST.new.forEach(i=>{if(!setAll.includes(i))setAll.push(i);setIdx.add(i)});
+    document.querySelector('input[name="setIdxMode"][value="manual"]').checked=true;
+    renderIdxChips($("setIdxChips"),setAll,setIdx);
+    toast(`已勾选 ${IDXST.new.length} 个新索引，保存后生效`)};
   $("setSave").onclick=async()=>{
     const mode=idxMode("setIdxMode");
-    if(mode==="manual"&&!setIdx.size){toast("请至少勾选一个索引，或改选“全部非内部索引”");return}
+    if(mode==="manual"&&!setIdx.size){toast("请至少勾选一个索引，或改选“自动发现”");return}
     const p=connPayload("setAuth","setUrl","setToken","setUser","setPass","setVerify");
     p.indexes=mode==="manual"?[...setIdx]:[];
+    if(!isLocked("index_include"))p.index_include=parsePatterns($("setInc"));
+    if(!isLocked("index_exclude"))p.index_exclude=parsePatterns($("setExc"));
+    if(!isLocked("index_rescan_minutes"))p.index_rescan_minutes=parseInt($("setRescan").value,10);
     if(!isLocked("cache_ttl"))p.cache_ttl=parseInt($("setTtl").value,10);
     if(!isLocked("mock"))p.mock=$("setMock").checked;
     try{
@@ -944,6 +1002,7 @@ function wireSettings(){
       CFG=d.config;
       showSet(false);
       toast(d.restart_required?"✅ 已保存；监听地址/端口有变化，重启服务后生效":"✅ 设置已保存");
+      refreshIdxStatus();
       if(CUR){const r=CUR.kind==="custom"?CUR:rangeFor(CUR.kind);if(r)loadRange(r,true)}
     }catch(e){toast("保存失败："+e.message)}}}
 
@@ -952,6 +1011,7 @@ async function boot(){
   try{CFG=await(await fetch("/api/config")).json()}
   catch(e){CFG={configured:false,mock:false,locked:[]}}
   wireWizard();wireSettings();
+  refreshIdxStatus();
   if(!CFG.configured&&!CFG.mock)showSetup(true);
   if(location.hash==="#setup"){wizStep(1);showSetup(true)}   // deep-link: 重新运行向导
   if(location.hash==="#settings")openSettings();             // deep-link: 直接打开设置
