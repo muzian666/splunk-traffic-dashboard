@@ -35,6 +35,7 @@ ENV_MAP = {
     "port": "DASHBOARD_PORT",
     "cache_ttl": "DASHBOARD_CACHE_TTL",
     "mock": "DASHBOARD_MOCK",
+    "default_days": "DASHBOARD_DEFAULT_DAYS",
     "indexes": "TRAFFIC_INDEXES",
     "index_include": "TRAFFIC_INDEX_INCLUDE",
     "index_exclude": "TRAFFIC_INDEX_EXCLUDE",
@@ -51,6 +52,7 @@ DEFAULTS: dict[str, Any] = {
     "port": 8091,
     "cache_ttl": 300,
     "mock": False,
+    "default_days": 7,  # time range loaded on page open
     "indexes": [],  # [] = auto-discovery mode: track matching non-internal indexes
     "index_include": [],  # glob patterns; empty = all discovered non-internal indexes
     "index_exclude": [],  # glob patterns subtracted after include; _* always excluded
@@ -61,7 +63,7 @@ DEFAULTS: dict[str, Any] = {
 TRUTHY = ("1", "true", "yes", "on")
 _BOOL_KEYS = ("verify_certs", "mock")
 _INT_RANGES = {"port": (1, 65535), "cache_ttl": (30, 86400),
-               "index_rescan_minutes": (0, 1440)}
+               "index_rescan_minutes": (0, 1440), "default_days": (1, 365)}
 _LIST_KEYS = ("indexes", "index_include", "index_exclude", "indexes_seen")
 _SECRET_KEYS = ("splunk_token", "splunk_password")
 

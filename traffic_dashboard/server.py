@@ -20,7 +20,9 @@ Run:  python -m traffic_dashboard.server     (from the project root)
 """
 from __future__ import annotations
 
+import json
 import logging
+import queue
 import random
 import re
 import threading
@@ -34,7 +36,7 @@ from typing import Any
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import RuntimeConfig
@@ -313,15 +315,36 @@ def date_list(earliest: float, latest: float) -> tuple[list[str], bool]:
     return dates, d1 == datetime.now().date()
 
 
-def build_dataset(earliest: float, latest: float) -> dict:
-    """Run the Splunk searches and assemble the frontend payload."""
+def build_dataset(earliest: float, latest: float,
+                  progress=None) -> dict:
+    """Run the Splunk searches and assemble the frontend payload.
+
+    `progress(msg)` (optional) is called before each stage so the streaming
+    endpoint can show live loading status in the UI."""
     if CONFIG.mock or not CONFIG.credentials_present():
         log.warning("mock mode (mock=%s, configured=%s)", CONFIG.mock,
                     CONFIG.credentials_present())
         return mock_dataset(earliest, latest)
 
+    pr = progress or (lambda m: None)
+    auto_mode = not CONFIG.get("indexes")
+    total = 5 + (1 if auto_mode else 0)
+    step_n = 0
+
+    def step(msg: str) -> None:
+        nonlocal step_n
+        step_n += 1
+        pr(f"{step_n}/{total} {msg}")
+
+    if auto_mode:
+        step("正在发现索引列表…")
     indexes = effective_indexes()
+    if auto_mode:
+        names = ", ".join(indexes[:3]) + ("…" if len(indexes) > 3 else "")
+        pr(f"共跟踪 {len(indexes)} 个索引（{names}）")
+
     dates, partial = date_list(earliest, latest)
+    span = f"{dates[0]} ~ {dates[-1]}"
     pos = {d: i for i, d in enumerate(dates)}
     n = len(dates)
     counts = {idx: [0] * n for idx in indexes}
@@ -333,6 +356,7 @@ def build_dataset(earliest: float, latest: float) -> dict:
     est, lst = str(int(earliest)), str(int(latest))
 
     t0 = time.time()
+    step(f"正在查询每日事件数 · {span}")
     for row in splunk_search(
             f"| tstats count where index IN ({_in_list(indexes)}) by _time span=1d, index",
             est, lst):
@@ -342,6 +366,7 @@ def build_dataset(earliest: float, latest: float) -> dict:
     timings["events"] = int((time.time() - t0) * 1000)
 
     t0 = time.time()
+    step(f"正在查询摄入流量 license_usage · {span}")
     for row in splunk_search(
             f"index=_internal source=*license_usage.log type=Usage idx IN ({_in_list(indexes)}) "
             f"| bin _time span=1d | stats sum(b) as bytes by _time, idx",
@@ -352,6 +377,7 @@ def build_dataset(earliest: float, latest: float) -> dict:
     timings["license_bytes"] = int((time.time() - t0) * 1000)
 
     t0 = time.time()
+    step(f"正在查询落盘量 per_index_thruput · {span}")
     for row in splunk_search(
             f"index=_internal source=*metrics.log group=per_index_thruput series IN ({_in_list(indexes)}) "
             f"| bin _time span=1d | stats sum(kb) as kb by _time, series",
@@ -362,6 +388,7 @@ def build_dataset(earliest: float, latest: float) -> dict:
     timings["disk_write"] = int((time.time() - t0) * 1000)
 
     t0 = time.time()
+    step("正在查询当前磁盘占用 dbinspect")
     for row in splunk_search(
             f"| dbinspect index=* | search index IN ({_in_list(indexes)}) "
             f"| eval mb=coalesce(sizeOnDiskMB, if(isnull(sizeOnDisk), 0, sizeOnDisk/1048576)) "
@@ -374,6 +401,7 @@ def build_dataset(earliest: float, latest: float) -> dict:
 
     # all-time first/last record per index (data coverage, not window-limited)
     t0 = time.time()
+    step("正在查询记录范围（全时间）")
     for row in splunk_search(
             f"| tstats min(_time) as ft, max(_time) as lt where index IN ({_in_list(indexes)}) by index",
             "0"):
@@ -471,7 +499,8 @@ def save_cache(cache: dict) -> None:
         log.exception("cache write failed")
 
 
-def get_dataset(earliest: float, latest: float, refresh: bool) -> dict:
+def get_dataset(earliest: float, latest: float, refresh: bool,
+                progress=None) -> dict:
     cache = load_cache()
     key = f"{CONFIG.fingerprint()}:{int(earliest)}:{int(latest)}"
     entry = cache.get(key)
@@ -479,7 +508,7 @@ def get_dataset(earliest: float, latest: float, refresh: bool) -> dict:
         entry["data"]["cached"] = True
         return entry["data"]
     try:
-        data = build_dataset(earliest, latest)
+        data = build_dataset(earliest, latest, progress=progress)
     except Exception as e:
         log.exception("Splunk fetch failed")
         if entry:
@@ -550,14 +579,12 @@ def index() -> FileResponse:
     return FileResponse(ROOT / "static" / "index.html")
 
 
-@app.get("/api/data")
-def api_data(days: int | None = Query(None, ge=1, le=365),
-             from_: float | None = Query(None, alias="from"),
-             to_: float | None = Query(None, alias="to"),
-             refresh: bool = False) -> dict:
+def _resolve_range(days: int | None, from_: float | None,
+                   to_: float | None) -> tuple[float, float]:
+    """Shared query-range validation for /api/data and /api/data/stream."""
     now = time.time()
     if from_ is None:
-        d = days or 30
+        d = days or int(CONFIG.get("default_days"))
         start = (datetime.now() - timedelta(days=d)).replace(
             hour=0, minute=0, second=0, microsecond=0)
         from_, to_ = start.timestamp(), now
@@ -567,7 +594,56 @@ def api_data(days: int | None = Query(None, ge=1, le=365),
         raise HTTPException(status_code=400, detail="time range too small (min 60s)")
     if to_ - from_ > 400 * 86400:
         raise HTTPException(status_code=400, detail="time range too large (max 400 days)")
-    return get_dataset(from_, to_, refresh)
+    return from_, to_
+
+
+@app.get("/api/data")
+def api_data(days: int | None = Query(None, ge=1, le=365),
+             from_: float | None = Query(None, alias="from"),
+             to_: float | None = Query(None, alias="to"),
+             refresh: bool = False) -> dict:
+    f, t = _resolve_range(days, from_, to_)
+    return get_dataset(f, t, refresh)
+
+
+@app.get("/api/data/stream")
+def api_data_stream(days: int | None = Query(None, ge=1, le=365),
+                    from_: float | None = Query(None, alias="from"),
+                    to_: float | None = Query(None, alias="to"),
+                    refresh: bool = False) -> StreamingResponse:
+    """SSE variant of /api/data: emits `progress` events (live query status)
+    while the dataset is being built, then one `done` (or `error`) event."""
+    f, t = _resolve_range(days, from_, to_)
+    q: queue.Queue = queue.Queue()
+
+    def worker() -> None:
+        try:
+            data = get_dataset(f, t, refresh,
+                               progress=lambda m: q.put(("progress", m)))
+            q.put(("done", data))
+        except HTTPException as e:
+            q.put(("error", str(e.detail)))
+        except Exception as e:  # noqa: BLE001
+            q.put(("error", str(e)[:300]))
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    def gen():
+        while True:
+            kind, payload = q.get()
+            if kind == "done":
+                yield f"event: done\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                return
+            if kind == "error":
+                yield (f"event: error\n"
+                       f"data: {json.dumps({'detail': payload}, ensure_ascii=False)}\n\n")
+                return
+            yield (f"event: progress\n"
+                   f"data: {json.dumps({'msg': payload}, ensure_ascii=False)}\n\n")
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 # --------------------------------------------------------------------------- #

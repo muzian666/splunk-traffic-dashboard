@@ -201,6 +201,22 @@ details.guide code{font-family:Consolas,Menlo,monospace}
 .radio label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
 fieldset.wsec{border:1px solid var(--card-border);border-radius:12px;padding:14px 16px 8px;margin:14px 0}
 fieldset.wsec legend{font-size:13px;font-weight:700;padding:0 6px;color:var(--text)}
+/* ---------- full-screen loading (live query status) ---------- */
+#loadMask{position:fixed;inset:0;z-index:95;display:none;align-items:center;justify-content:center;
+  background:rgba(248,250,252,.45);backdrop-filter:blur(10px)}
+.loadbox{display:flex;flex-direction:column;align-items:center;gap:14px;padding:30px 46px;
+  background:rgba(255,255,255,.92);border:1px solid var(--card-border);border-radius:16px;
+  box-shadow:0 24px 70px rgba(2,6,23,.25);max-width:82vw}
+.spin{width:46px;height:46px;border-radius:50%;
+  border:4px solid rgba(8,145,178,.18);border-top-color:#0891b2;animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loadTitle{font-size:14.5px;font-weight:650}
+#loadLog{display:flex;flex-direction:column;gap:4px;align-items:center}
+#loadLog .ll{font-size:12.5px;color:var(--muted)}
+#loadLog .ll:last-child{color:var(--accent);font-weight:600}
+
+/* first-run wizard over a blank page (no dashboard behind) */
+body.wizblank header,body.wizblank .wrap{display:none}
 @media (max-width:1280px){.kpis{grid-template-columns:repeat(3,1fr)}}
 @media (max-width:1100px){.span8,.span6,.span4{grid-column:span 12}}
 @media (max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}.brand h1{font-size:16px}}
@@ -233,7 +249,7 @@ fieldset.wsec legend{font-size:13px;font-weight:700;padding:0 6px;color:var(--te
       <button data-r="yday">昨日</button>
       <button data-r="7">近 7 天</button>
       <button data-r="14">近 14 天</button>
-      <button data-r="30" class="on">近 30 天</button>
+      <button data-r="30">近 30 天</button>
       <button data-r="60">近 60 天</button>
       <button data-r="90">近 90 天</button>
       <button data-r="custom">自定义</button>
@@ -290,6 +306,15 @@ fieldset.wsec legend{font-size:13px;font-weight:700;padding:0 6px;color:var(--te
     三者数值依次递减属正常现象。历史深度受 _internal 索引保留期限制。<span id="ftQuery"></span>
   </footer>
 </div>
+<!-- ========== full-screen loading overlay ========== -->
+<div id="loadMask">
+  <div class="loadbox">
+    <div class="spin"></div>
+    <div id="loadTitle">正在加载…</div>
+    <div id="loadLog"></div>
+  </div>
+</div>
+
 <!-- ========== first-run setup wizard ========== -->
 <div class="mask" id="setupMask" style="display:none">
   <div class="wcard">
@@ -335,8 +360,14 @@ fieldset.wsec legend{font-size:13px;font-weight:700;padding:0 6px;color:var(--te
     <div class="wstep" data-s="2">
       <div class="frow">
         <label>Splunk 管理地址（REST 8089 端口）</label>
-        <input class="fi" id="wizUrl" placeholder="https://splunk.example.com:8089" autocomplete="off" spellcheck="false">
-        <div class="fhint">协议 + 主机 + 8089 端口，例如 https://10.0.0.8:8089</div>
+        <div style="display:flex;gap:8px">
+          <select class="fi" id="wizProto" style="width:116px">
+            <option value="https://">https://</option>
+            <option value="http://">http://</option>
+          </select>
+          <input class="fi" id="wizUrl" placeholder="splunk.example.com:8089" autocomplete="off" spellcheck="false" style="flex:1">
+        </div>
+        <div class="fhint">主机名/IP + 8089 管理端口（不是网页端口 8000），例如 10.0.0.8:8089</div>
       </div>
       <div id="wizAuth">
         <div class="authtabs">
@@ -410,7 +441,13 @@ fieldset.wsec legend{font-size:13px;font-weight:700;padding:0 6px;color:var(--te
       <legend>Splunk 连接</legend>
       <div class="frow">
         <label>管理地址（REST 8089 端口）</label>
-        <input class="fi" id="setUrl" autocomplete="off" spellcheck="false">
+        <div style="display:flex;gap:8px">
+          <select class="fi" id="setProto" style="width:116px">
+            <option value="https://">https://</option>
+            <option value="http://">http://</option>
+          </select>
+          <input class="fi" id="setUrl" placeholder="splunk.example.com:8089" autocomplete="off" spellcheck="false" style="flex:1">
+        </div>
       </div>
       <div id="setAuth">
         <div class="authtabs">
@@ -479,11 +516,16 @@ fieldset.wsec legend{font-size:13px;font-weight:700;padding:0 6px;color:var(--te
 
     <fieldset class="wsec">
       <legend>看板行为</legend>
-      <div class="frow" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="frow" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
         <div>
           <label>缓存有效期（秒）</label>
           <input class="fi" id="setTtl" type="number" min="30" max="86400">
           <div class="fhint">Splunk 查询结果的复用时长，越大越省查询</div>
+        </div>
+        <div>
+          <label>默认展示天数</label>
+          <input class="fi" id="setDays" type="number" min="1" max="365">
+          <div class="fhint">打开页面时默认加载的时间范围</div>
         </div>
         <div>
           <label>演示数据模式</label>
@@ -492,9 +534,16 @@ fieldset.wsec legend{font-size:13px;font-weight:700;padding:0 6px;color:var(--te
           </label>
         </div>
       </div>
-      <div class="frow">
-        <label>监听地址（修改后需重启服务）</label>
-        <input class="fi" id="setHostPort" readonly>
+      <div class="frow" style="display:grid;grid-template-columns:1fr 150px 1.4fr;gap:14px;align-items:start">
+        <div>
+          <label>监听地址（重启后生效）</label>
+          <input class="fi" id="setHost" placeholder="127.0.0.1" autocomplete="off" spellcheck="false">
+        </div>
+        <div>
+          <label>端口</label>
+          <input class="fi" id="setPort" type="number" min="1" max="65535">
+        </div>
+        <div class="fhint" style="padding-top:24px">0.0.0.0 = 局域网可访问（挂壁大屏场景）；设置页无鉴权，开放前请加访问控制</div>
       </div>
     </fieldset>
 
@@ -743,15 +792,37 @@ function rangeFor(kind){
   const s=new Date(now);s.setDate(s.getDate()-n);
   return{kind,from:mid(s),to:now.getTime()/1000,label:`近 ${n} 天`};
 }
+/* ---------------- streaming load with live progress ---------------- */
+function sseData(url,q,onProgress){
+  return new Promise((res,rej)=>{
+    const es=new EventSource(url);let settled=false;
+    es.addEventListener("progress",e=>{try{onProgress(JSON.parse(e.data).msg)}catch(_){}});
+    es.addEventListener("done",e=>{settled=true;es.close();
+      try{res(JSON.parse(e.data))}catch(err){rej(err)}});
+    es.addEventListener("error",async e=>{
+      if(settled)return;settled=true;es.close();
+      if(e.data){try{rej(new Error(JSON.parse(e.data).detail||"加载失败"));return}catch(_){}}
+      /* transport-level failure: ask the plain endpoint for a precise error */
+      try{const r=await fetch(`/api/data?${q}`);const d=await r.json();
+        rej(new Error(d.detail||`HTTP ${r.status}`))}
+      catch(_){rej(new Error("连接中断"))}});
+  })}
+function addLoadLog(msg){
+  const box=$("loadLog"),d=document.createElement("div");
+  d.className="ll";d.textContent=msg;box.appendChild(d);
+  while(box.children.length>4)box.removeChild(box.firstChild)}
+function showLoad(){$("loadTitle").textContent=`正在从 Splunk 加载${CUR?" · "+CUR.label:""}…`;
+  $("loadLog").innerHTML="";$("loadMask").style.display="flex"}
+function hideLoad(){$("loadMask").style.display="none"}
+
 async function loadRange(r,force){
   CUR=r;
   $("busy").classList.add("on");
+  const showTimer=setTimeout(showLoad,450);
   try{
     const q=new URLSearchParams({from:String(Math.floor(r.from)),to:String(Math.floor(r.to))});
     if(force)q.set("refresh","1");
-    const res=await fetch(`/api/data?${q}`);
-    if(!res.ok){const e=await res.json().catch(()=>({detail:res.statusText}));throw new Error(e.detail||`HTTP ${res.status}`)}
-    const d=await res.json();
+    const d=await sseData(`/api/data/stream?${q}`,q,addLoadLog);
     DATA=d;
     if(!sel.size||![...sel].every(i=>DATA.indexes.includes(i)))sel=new Set(DATA.indexes);
     $("chipWhen").innerHTML=`${r.label} · 数据时间 <b>${DATA.generated_at}</b>${DATA.cached?" · 缓存":""}`;
@@ -764,6 +835,8 @@ async function loadRange(r,force){
   }catch(e){
     toast("加载失败："+e.message);
   }finally{
+    clearTimeout(showTimer);
+    hideLoad();
     $("busy").classList.remove("on");
   }
 }
@@ -827,13 +900,25 @@ async function apiPost(url,body){
   const d=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(d.detail||("HTTP "+r.status));
   return d}
-function connPayload(rootId,urlId,tokId,usrId,pwdId,verId){
+function connPayload(rootId,protoId,urlId,tokId,usrId,pwdId,verId){
   const mode=($(rootId).querySelector(".atab.on")||{}).dataset?.m||"token";
-  const p={splunk_url:$(urlId).value.trim(),verify_certs:$(verId).checked};
+  const hp=$(urlId).value.trim();
+  const p={splunk_url:hp?$(protoId).value+hp:"",verify_certs:$(verId).checked};
   const t=$(tokId).value.trim(),u=$(usrId).value.trim(),pw=$(pwdId).value.trim();
   if(mode==="token"){if(t)p.splunk_token=t}
   else{if(u)p.splunk_username=u;if(pw)p.splunk_password=pw}
   return p}
+function splitProto(url){
+  const m=String(url||"").match(/^(https?:\/\/)(.*)$/);
+  return m?{proto:m[1],rest:m[2]}:{proto:"https://",rest:url||""}}
+/* modal masks lock background scrolling while visible */
+let maskOpen=0;
+function maskDisplay(maskEl,on){
+  const was=maskEl.style.display!=="none";
+  if(on===was)return;
+  maskEl.style.display=on?"flex":"none";
+  maskOpen=Math.max(0,maskOpen+(on?1:-1));
+  document.body.style.overflow=maskOpen?"hidden":""}
 async function doTest(vals,msgEl,btn){
   msgEl.textContent="测试中…";msgEl.className="tmsg";if(btn)btn.disabled=true;
   try{
@@ -893,7 +978,7 @@ function manualAdd(manualEl,allArr,selSet,box){
 
 /* ---- wizard ---- */
 let wizOk=false,wizAll=[],wizIdx=new Set();
-const showSetup=on=>$("setupMask").style.display=on?"flex":"none";
+const showSetup=on=>maskDisplay($("setupMask"),on);
 function wizStep(n){
   document.querySelectorAll("#setupMask .wstep").forEach(s=>s.classList.toggle("on",s.dataset.s===String(n)));
   document.querySelectorAll("#setupMask .steps .st").forEach(s=>s.classList.toggle("on",+s.dataset.s<=n));
@@ -905,11 +990,11 @@ function wireWizard(){
   lockIf($("wizUrl"),"splunk_url");lockIf($("wizToken"),"splunk_token");
   lockIf($("wizUser"),"splunk_username");lockIf($("wizPass"),"splunk_password");
   $("wizTest").onclick=async()=>{
-    wizOk=await doTest(connPayload("wizAuth","wizUrl","wizToken","wizUser","wizPass","wizVerify"),$("wizTestMsg"),$("wizTest"));
+    wizOk=await doTest(connPayload("wizAuth","wizProto","wizUrl","wizToken","wizUser","wizPass","wizVerify"),$("wizTestMsg"),$("wizTest"));
     $("wizNext3").disabled=!wizOk};
   $("wizNext3").onclick=()=>wizStep(3);
   $("wizLoadIdx").onclick=async()=>{
-    const vals=connPayload("wizAuth","wizUrl","wizToken","wizUser","wizPass","wizVerify");
+    const vals=connPayload("wizAuth","wizProto","wizUrl","wizToken","wizUser","wizPass","wizVerify");
     wizAll=await doDiscover(vals,$("wizIdxChips"),wizIdx,$("wizIdxMsg"),$("wizLoadIdx"))||wizAll;
     if(wizAll.length){$("wizIdxBox").style.display="block";
       document.querySelector('input[name="wizIdxMode"][value="manual"]').checked=true}};
@@ -919,25 +1004,27 @@ function wireWizard(){
   $("wizSave").onclick=async()=>{
     const mode=idxMode("wizIdxMode");
     if(mode==="manual"&&!wizIdx.size){toast("请至少勾选一个索引，或改选“全部非内部索引”");return}
-    const p=connPayload("wizAuth","wizUrl","wizToken","wizUser","wizPass","wizVerify");
+    const p=connPayload("wizAuth","wizProto","wizUrl","wizToken","wizUser","wizPass","wizVerify");
     p.indexes=mode==="manual"?[...wizIdx]:[];
     try{
       const d=await apiPost("/api/config",p);
       toast(d.restart_required?"✅ 已保存；监听地址/端口有变化，重启服务后生效":"✅ 配置已保存，正在载入看板…");
       setTimeout(()=>location.reload(),600);
     }catch(e){toast("保存失败："+e.message)}};
-  $("wizDemo").onclick=()=>{showSetup(false);toast("当前为演示数据模式，可随时点击右上角 ⚙ 设置完成配置")};
+  $("wizDemo").onclick=()=>{leaveWizBlank();showSetup(false);toast("当前为演示数据模式，可随时点击右上角 ⚙ 设置完成配置")};
   $("setupClose").onclick=()=>{
     showSetup(false);
-    if(CFG&&!CFG.configured)toast("尚未配置 Splunk：当前为演示数据，点击右上角 ⚙ 设置可随时完成配置")};
+    if(CFG&&!CFG.configured){leaveWizBlank();toast("尚未配置 Splunk：当前为演示数据，点击右上角 ⚙ 设置可随时完成配置")}};
 }
 
 /* ---- settings ---- */
 let setAll=[],setIdx=new Set();
-const showSet=on=>$("setMask").style.display=on?"flex":"none";
+const showSet=on=>maskDisplay($("setMask"),on);
 function openSettings(){
   if(!CFG)return;
-  $("setUrl").value=CFG.splunk_url||"";
+  const u=splitProto(CFG.splunk_url);
+  $("setProto").value=u.proto;
+  $("setUrl").value=u.rest;
   $("setVerify").checked=!!CFG.verify_certs;
   $("setTokenHint").textContent=CFG.has_splunk_token?`已配置 ${CFG.splunk_token} · 留空保持不变`:"未设置";
   $("setToken").value="";$("setUser").value=CFG.splunk_username||"";$("setPass").value="";
@@ -946,8 +1033,10 @@ function openSettings(){
   $("setAuth").querySelectorAll(".atab").forEach(b=>b.classList.toggle("on",(b.dataset.m==="basic")===!!basic));
   $("setAuth").querySelectorAll(".apane").forEach(p=>p.style.display=(p.dataset.m==="basic")===!!basic?"":"none");
   $("setTtl").value=CFG.cache_ttl;
+  $("setDays").value=CFG.default_days;
   $("setMock").checked=!!CFG.mock;
-  $("setHostPort").value=`${CFG.host}:${CFG.port}（修改：.env 中 DASHBOARD_HOST / DASHBOARD_PORT）`;
+  $("setHost").value=CFG.host;
+  $("setPort").value=CFG.port;
   $("setInc").value=(CFG.index_include||[]).join(", ");
   $("setExc").value=(CFG.index_exclude||[]).join(", ");
   $("setRescan").value=CFG.index_rescan_minutes;
@@ -955,6 +1044,8 @@ function openSettings(){
   lockIf($("setUrl"),"splunk_url");lockIf($("setToken"),"splunk_token");
   lockIf($("setUser"),"splunk_username");lockIf($("setPass"),"splunk_password");
   lockIf($("setTtl"),"cache_ttl");lockIf($("setMock"),"mock");
+  lockIf($("setDays"),"default_days");
+  lockIf($("setHost"),"host");lockIf($("setPort"),"port");
   lockIf($("setInc"),"index_include");lockIf($("setExc"),"index_exclude");
   lockIf($("setRescan"),"index_rescan_minutes");
   setAll=(CFG.indexes||[]).slice();setIdx=new Set(CFG.indexes||[]);
@@ -970,9 +1061,9 @@ function wireSettings(){
   $("setupMask").onclick=e=>{if(e.target===$("setupMask"))showSetup(false)};
   $("setCancel").onclick=()=>showSet(false);
   wireAuthTabs("setAuth");
-  $("setTest").onclick=()=>doTest(connPayload("setAuth","setUrl","setToken","setUser","setPass","setVerify"),$("setTestMsg"),$("setTest"));
+  $("setTest").onclick=()=>doTest(connPayload("setAuth","setProto","setUrl","setToken","setUser","setPass","setVerify"),$("setTestMsg"),$("setTest"));
   $("setLoadIdx").onclick=async()=>{
-    const vals=connPayload("setAuth","setUrl","setToken","setUser","setPass","setVerify");
+    const vals=connPayload("setAuth","setProto","setUrl","setToken","setUser","setPass","setVerify");
     const got=await doDiscover(vals,$("setIdxChips"),setIdx,$("setIdxMsg"),$("setLoadIdx"));
     if(got){setAll=got;document.querySelector('input[name="setIdxMode"][value="manual"]').checked=true}};
   $("setIdxAll").onclick=()=>{setIdx=new Set(setAll);renderIdxChips($("setIdxChips"),setAll,setIdx)};
@@ -990,13 +1081,16 @@ function wireSettings(){
   $("setSave").onclick=async()=>{
     const mode=idxMode("setIdxMode");
     if(mode==="manual"&&!setIdx.size){toast("请至少勾选一个索引，或改选“自动发现”");return}
-    const p=connPayload("setAuth","setUrl","setToken","setUser","setPass","setVerify");
+    const p=connPayload("setAuth","setProto","setUrl","setToken","setUser","setPass","setVerify");
     p.indexes=mode==="manual"?[...setIdx]:[];
     if(!isLocked("index_include"))p.index_include=parsePatterns($("setInc"));
     if(!isLocked("index_exclude"))p.index_exclude=parsePatterns($("setExc"));
     if(!isLocked("index_rescan_minutes"))p.index_rescan_minutes=parseInt($("setRescan").value,10);
     if(!isLocked("cache_ttl"))p.cache_ttl=parseInt($("setTtl").value,10);
+    if(!isLocked("default_days"))p.default_days=parseInt($("setDays").value,10);
     if(!isLocked("mock"))p.mock=$("setMock").checked;
+    if(!isLocked("host"))p.host=$("setHost").value.trim();
+    if(!isLocked("port"))p.port=parseInt($("setPort").value,10);
     try{
       const d=await apiPost("/api/config",p);
       CFG=d.config;
@@ -1007,16 +1101,28 @@ function wireSettings(){
     }catch(e){toast("保存失败："+e.message)}}}
 
 /* ---- boot ---- */
+const DEF_DAYS=()=>String((CFG&&CFG.default_days)||7);
+function loadDefault(){
+  document.querySelectorAll("#segRange button").forEach(x=>x.classList.remove("on"));
+  const b=document.querySelector(`#segRange [data-r="${DEF_DAYS()}"]`);
+  if(b)b.classList.add("on");
+  loadRange(rangeFor(DEF_DAYS()),false)}
+function leaveWizBlank(){
+  document.body.classList.remove("wizblank");
+  if(!DATA)loadDefault()}
 async function boot(){
   try{CFG=await(await fetch("/api/config")).json()}
-  catch(e){CFG={configured:false,mock:false,locked:[]}}
+  catch(e){CFG={configured:false,mock:false,locked:[],default_days:7}}
   wireWizard();wireSettings();
   refreshIdxStatus();
-  if(!CFG.configured&&!CFG.mock)showSetup(true);
+  if(!CFG.configured&&!CFG.mock){          // first run: wizard on a blank page
+    document.body.classList.add("wizblank");
+    showSetup(true);
+    return}
   if(location.hash==="#setup"){wizStep(1);showSetup(true)}   // deep-link: 重新运行向导
   if(location.hash==="#settings")openSettings();             // deep-link: 直接打开设置
+  loadDefault();
 }
-loadRange(rangeFor("30"),false);
 boot();
 </script>
 </body>
