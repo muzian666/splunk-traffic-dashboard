@@ -1,25 +1,44 @@
-# Splunk 流量看板（splunk-traffic-dashboard）
+# Splunk Traffic Dashboard
 
-一个独立部署的 Splunk 流量统计看板：通过 Splunk 管理 REST API（8089 端口）查询各索引的每日
-**日志量、摄入流量（license 口径）、落盘量与磁盘占用**，用 ECharts 展示成可挂壁的大屏页面。
-首次访问自带**初始化配置向导**，连 Splunk 都不用碰命令行；之后随时点右上角 **⚙ 设置** 修改连接。
+**English** | [简体中文](README.zh-CN.md)
+
+A standalone web dashboard for Splunk ingest traffic: it queries the Splunk
+management REST API (port 8089) for per-index daily **event counts, ingest
+volume (license metering), disk write and current disk usage**, and renders
+them as an ECharts wall-display page. A built-in **first-run setup wizard**
+gets you connected without touching any config file, and the **⚙ Settings**
+button lets you change everything later. The UI is bilingual (中文 / English).
 
 ![dashboard](docs/img/dashboard.png)
 
-## 功能
+## Features
 
-- **每日摄入流量**（license_usage 原始字节，计费口径）、**每日日志数**、**每日落盘量**、**当前磁盘占用**（dbinspect）
-- 6 个 KPI 卡片、堆叠柱图、流量占比环形图、索引 × 日期热力图、磁盘占用条形图
-- 各索引汇总表 / 每日明细表，列头可排序，支持 CSV 导出（导出遵循当前筛选）
-- 时间范围：今日 / 昨日 / 7~90 天 / 自定义（默认天数可在设置中修改）；索引多选筛选；每 5 分钟自动刷新
-- 查询期间全屏加载动画，实时显示当前查询步骤（事件数 / 摄入流量 / 落盘 / 磁盘 / 记录范围）与覆盖日期
-- **索引自动发现**：后台定期重扫 Splunk，新索引自动纳入统计（自动模式）或顶栏 🆕 提醒一键跟踪（手动模式），支持包含/排除通配模式（如只统计 `prod_*`）
-- 查询结果本地缓存（默认 300s），挂壁页面秒开；Splunk 暂不可达时回退上次缓存并提示
-- **未配置 Splunk 时自动进入演示数据模式**，可以先用假数据体验全部 UI
+- **Daily ingest volume** (license_usage raw bytes — the billing metric),
+  **daily event counts**, **daily disk write**, and **current disk usage**
+  (dbinspect)
+- 6 KPI cards, stacked bars, share donut, index × date heatmap, disk usage bars
+- Per-index summary table + daily detail table with sortable columns; CSV export
+  honors the current filters
+- Time ranges: today / yesterday / 7–90 days / custom (default range
+  configurable, default 7 days); per-index multiselect; auto refresh every 5 min
+- **Index auto-discovery**: a background scanner re-discovers indexes and either
+  includes new ones automatically (auto mode, with include/exclude glob
+  patterns such as `prod_*`) or surfaces them as a 🆕 top-bar chip with
+  one-click tracking (manual mode)
+- Full-screen loading overlay with a live query log streamed from the server
+  (current step: events / ingest / disk write / dbinspect / record range, with
+  date spans)
+- Results are cached locally (default 300s) so the wall page stays instant;
+  if Splunk is unreachable the last good dataset is served with a stale hint
+- **Demo mode with fake data when no Splunk is configured** — explore the
+  whole UI before connecting
+- Bilingual UI (中文 / English): pick the language in the first setup step or
+  in ⚙ Settings; force it per-URL with `?lang=en` / `?lang=zh`
 
-## 快速开始
+## Quick start
 
-要求：Python 3.10+，一台能访问 Splunk 8089 管理端口的主机。
+Requirements: Python 3.10+ and a host that can reach your Splunk management
+port 8089.
 
 ```bash
 git clone https://github.com/muzian666/splunk-traffic-dashboard.git
@@ -31,110 +50,138 @@ python -m venv .venv
 # Linux/macOS:
 # .venv/bin/pip install -r requirements.txt
 
-# 启动（Windows 也可直接双击 start_dashboard.bat）
+# start (on Windows you can also double-click start_dashboard.bat)
 .venv\Scripts\python -m traffic_dashboard.server     # Windows
-# .venv/bin/python -m traffic_dashboard.server       # Linux/macOS（或 ./run.sh）
+# .venv/bin/python -m traffic_dashboard.server       # Linux/macOS (or ./run.sh)
 ```
 
-打开 <http://127.0.0.1:8091>，按向导配置即可。
+Open <http://127.0.0.1:8091> and follow the wizard.
 
-## 首次配置向导（初始化）
+## First-run setup wizard
 
-首次打开且尚未配置连接时，页面会自动弹出三步向导：
+On first open (no connection configured) a three-step wizard appears over a
+blank page:
 
 ![setup wizard](docs/img/setup.png)
 
-1. **连接前的准备** —— 内置 Token 获取指引（Splunk Web → 设置 → TOKEN 新建令牌；或 `curl` 调用
-   `/services/authorization/tokens` 创建），以及 8089 / 8000 端口、自签名证书等注意事项。
-2. **配置 Splunk 连接** —— 填管理地址（如 `https://10.0.0.8:8089`），选择 **Token（推荐）** 或
-   **用户名/密码** 认证，点「⚡ 测试连接」实时验证，成功会显示 Splunk 版本与主机名。
-3. **选择跟踪的索引** —— 一键从 Splunk 拉取索引列表勾选；也可以选「全部非内部索引」自动跟踪，
-   或手动输入索引名。
+1. **Prepare** — pick the UI language; built-in guidance for getting a token
+   (Splunk Web → Settings → TOKEN → New Token, or a one-line `curl` against
+   `/services/authorization/tokens`), plus notes on 8089 vs 8000 and
+   self-signed certificates.
+2. **Splunk connection** — protocol selector + host:port, **Token
+   (recommended)** or **username/password** auth, and a live
+   ⚡ *Test connection* that reports the Splunk version and server name.
+3. **Choose indexes** — load the index list from Splunk and check the ones you
+   want, or choose auto-discovery for all non-internal indexes, or type names
+   manually.
 
-保存后立即生效，无需重启。凭据只写入本机 `config.json`（已被 `.gitignore` 忽略）。
+Saving takes effect immediately — no restart. Credentials are only written to
+the local `config.json` (gitignored).
 
-> 想先看看效果？向导第一步点「暂不配置，先用演示数据看看」即可用假数据体验全部功能。
+> Want to look around first? Click “Skip for now, explore with demo data” in
+> step 1 to play with fake data.
 
-## 设置页面
+## Settings page
 
-主界面右上角 **⚙ 设置** 可随时修改：
+The **⚙ Settings** button (top-right) opens the settings modal:
 
 ![settings](docs/img/settings.png)
 
-- **Splunk 连接**：地址 / Token 或账号密码 / TLS 证书校验，保存前可先「测试连接」
-- **跟踪索引**：重新拉取索引列表勾选、手动增删、自动/手动模式切换、包含/排除通配模式、后台重扫间隔，新索引可一键跟踪
-- **看板行为**：查询缓存时长（秒）、默认展示天数、演示数据模式、监听地址与端口（重启后生效）
+- **Splunk connection**: URL / token or username+password / TLS verification,
+  with a test button
+- **Tracked indexes**: reload the index list, manual selection,
+  auto-discovery mode with include/exclude glob patterns, background rescan
+  interval, one-click “track all new”
+- **Dashboard behavior**: UI language, cache TTL, default range (days), demo
+  mode, listen address & port (restart to apply)
 
-保存即时生效（监听地址/端口除外，需重启进程）。
+Saves are hot-reloaded (except host/port, which need a restart).
 
-### 索引自动发现
+### Index auto-discovery
 
-跟踪索引有两种模式（⚙ 设置中切换）：
+- **Auto mode**: track every non-internal index the credential can see
+  (`_*` always excluded), optionally filtered by include/exclude globs
+  (e.g. include `prod_*`, exclude `test_*, summary_*`). The background scanner
+  re-runs every N minutes (default 10) and new Splunk indexes are picked up
+  automatically.
+- **Manual mode**: only the checked indexes are tracked. New indexes are never
+  auto-added, but the dashboard shows a 🆕 chip and settings offers
+  “track all new” in one click.
 
-- **自动发现**：跟踪凭据可见的全部非内部索引（`_*` 永远排除），可用**包含/排除通配模式**过滤，
-  例如包含 `prod_*`、排除 `test_*, summary_*`。后台默认每 10 分钟重扫一次，Splunk 新建的索引
-  会自动纳入统计，无需任何操作。
-- **手动选择**：只统计勾选的索引。后台重扫依旧运行，新索引不会自动加入，但看板顶栏会出现
-  🆕 提醒，点击进入设置可「一键跟踪全部新索引」。
+The status line shows the last discovery time, visible vs tracked counts and
+how many are new.
 
-状态行会显示：上次发现时间、凭据可见的索引数、当前跟踪数与新索引数。
+## Configuration
 
-## 配置说明
+Three layers, rightmost wins: `built-in defaults` ← `.env` / OS environment ←
+`config.json` (saved by the web UI).
 
-配置有三层，**右侧优先**：`内置默认值` ← `.env` / 系统环境变量 ← `config.json`（网页端保存）。
-
-| 项目 | 环境变量 | 默认 | 说明 |
+| Setting | Env var | Default | Notes |
 |---|---|---|---|
-| Splunk 管理地址 | `SPLUNK_API_URL` | 空 | 如 `https://splunk.example.com:8089` |
-| Bearer Token | `SPLUNK_TOKEN` | 空 | 与用户名密码二选一，推荐 Token |
-| 用户名 / 密码 | `SPLUNK_USERNAME` / `SPLUNK_PASSWORD` | 空 | Basic 认证方式 |
-| 验证 TLS 证书 | `SPLUNK_VERIFY_CERTS` | `false` | 自签名证书保持 `false` |
-| 监听地址 | `DASHBOARD_HOST` | `127.0.0.1` | `0.0.0.0` = 局域网可访问（大屏场景） |
-| 端口 | `DASHBOARD_PORT` | `8091` | 修改后需重启 |
-| 缓存秒数 | `DASHBOARD_CACHE_TTL` | `300` | 30 ~ 86400 |
-| 默认展示天数 | `DASHBOARD_DEFAULT_DAYS` | `7` | 打开页面时加载的时间范围，1 ~ 365 |
-| 演示模式 | `DASHBOARD_MOCK` | `0` | `1` = 用假数据，不查 Splunk |
-| 跟踪索引 | `TRAFFIC_INDEXES` | 空 | JSON 数组；空 = 自动发现模式 |
-| 包含模式 | `TRAFFIC_INDEX_INCLUDE` | 空 | JSON 数组，通配符；自动模式下生效 |
-| 排除模式 | `TRAFFIC_INDEX_EXCLUDE` | 空 | JSON 数组，通配符；内部 `_*` 始终排除 |
-| 索引重扫间隔 | `INDEX_RESCAN_MINUTES` | `10` | 分钟；`0` = 关闭后台重扫/新索引检测 |
+| Splunk management URL | `SPLUNK_API_URL` | empty | e.g. `https://splunk.example.com:8089` |
+| Bearer token | `SPLUNK_TOKEN` | empty | preferred auth; or username/password |
+| Username / password | `SPLUNK_USERNAME` / `SPLUNK_PASSWORD` | empty | basic auth |
+| Verify TLS | `SPLUNK_VERIFY_CERTS` | `false` | keep off for self-signed certs |
+| Listen address | `DASHBOARD_HOST` | `127.0.0.1` | `0.0.0.0` = LAN (wall display) |
+| Port | `DASHBOARD_PORT` | `8091` | restart to apply |
+| Cache TTL (s) | `DASHBOARD_CACHE_TTL` | `300` | 30 – 86400 |
+| Default range (days) | `DASHBOARD_DEFAULT_DAYS` | `7` | 1 – 365 |
+| Demo mode | `DASHBOARD_MOCK` | `0` | `1` = fake data, no Splunk queries |
+| Tracked indexes | `TRAFFIC_INDEXES` | empty | JSON array; empty = auto-discovery |
+| Include patterns | `TRAFFIC_INDEX_INCLUDE` | empty | JSON array of globs; auto mode |
+| Exclude patterns | `TRAFFIC_INDEX_EXCLUDE` | empty | JSON array of globs; `_*` always excluded |
+| Index rescan (min) | `INDEX_RESCAN_MINUTES` | `10` | 0 disables new-index detection |
 
-通过 `.env` / 环境变量设置的项会在设置页中显示为**只读**（带提示），避免“页面改了却不生效”的困惑；
-完全用网页管理配置的话，不需要创建 `.env`（参考 `.env.example`）。
+Values coming from `.env` / environment show up as **read-only** fields in the
+settings page (with a hint), so the effective configuration is always
+predictable. To manage everything in the browser, don't create an `.env` at
+all (see `.env.example`).
 
-### API 一览
+### API overview
 
-| 端点 | 说明 |
+| Endpoint | Description |
 |---|---|
-| `GET /api/data?from=<epoch>&to=<epoch>` | 看板数据集（自动缓存） |
-| `GET /api/config` / `POST /api/config` | 读取（脱敏）/ 保存配置 |
-| `POST /api/config/test` | 测试连接（可携带未保存的凭据） |
-| `POST /api/indexes/discover` | 发现可跟踪的索引列表 |
-| `GET /api/indexes/status` | 索引自动发现状态（跟踪/可见/新出现） |
-| `GET /api/health` | 健康状态 |
+| `GET /api/data?from=<epoch>&to=<epoch>` | dashboard dataset (cached) |
+| `GET /api/data/stream?...&lang=zh` | SSE variant with live `progress` events |
+| `GET /api/config` / `POST /api/config` | read (masked) / save configuration |
+| `POST /api/config/test` | test a connection (may carry unsaved credentials) |
+| `POST /api/indexes/discover` | list trackable indexes |
+| `GET /api/indexes/status` | auto-discovery status (tracked / visible / new) |
+| `GET /api/health` | health check |
 
-## 统计口径
+## Metrics
 
-- **摄入流量** = `license_usage` 原始字节数（进入 Splunk 的数据量，按流量计费建议以此为准，不含压缩）
-- **落盘量** = `metrics` 的 `per_index_thruput`（解析后写入索引的数据量）
-- **磁盘占用** = `dbinspect sizeOnDisk`（压缩后实际占用，含历史累积）
+- **Ingest** = raw bytes from `license_usage` (data entering Splunk;
+  recommended for volume-based billing; uncompressed)
+- **Disk write** = `per_index_thruput` from metrics (parsed data written to indexes)
+- **Disk usage** = `dbinspect sizeOnDisk` (actual compressed usage incl. history)
 
-三者数值依次递减属正常现象。历史深度受 `_internal` 索引保留期限制。
+Values decreasing across the three is expected. History depth is limited by
+the `_internal` retention period.
 
-## 安全注意事项
+## Security notes
 
-- 凭据保存在本机 `config.json`，确保该文件与仓库目录的访问权限受控（已默认 `.gitignore`）
-- 服务默认只监听 `127.0.0.1`；设置界面**没有登录鉴权**，如需挂壁大屏开放到局域网
-  （`DASHBOARD_HOST=0.0.0.0`），请放在受信任网段或用防火墙/反向代理加访问控制
-- 建议为看板创建只读、仅授权目标索引的专用 Token，不要使用管理员账号
+- Credentials live in the local `config.json` — keep the directory's access
+  under control (gitignored by default)
+- The server binds `127.0.0.1` by default; the settings page has **no login
+  auth**, so if you open it to a LAN for a wall display
+  (`DASHBOARD_HOST=0.0.0.0`), keep it on a trusted segment or add access
+  control via firewall / reverse proxy
+- Prefer a dedicated read-only token scoped to the target indexes over an
+  admin account
 
-## 常见问题
+## FAQ
 
-- **测试连接报 401**：Token 无效或过期；账号密码错误。重新生成 Token 或检查账号。
-- **无法连接 / 超时**：确认用的是 **8089 管理端口**而不是 8000；看板主机到 Splunk 的网络/防火墙放行。
-- **TLS 证书错误**：自签名证书请关闭「验证 TLS 证书」，或将 Splunk CA 导入系统信任库。
-- **索引列表为空**：Token 权限看不到任何索引，请让 Splunk 管理员为该角色授权目标索引的读取权限。
-- **数据为 0**：`license_usage` / `per_index_thruput` 来自 `_internal`，超岀保留期的历史查不到。
+- **401 on test**: invalid or expired token / wrong credentials. Regenerate
+  the token or check the account.
+- **Cannot connect / timeout**: confirm you're using the **8089 management
+  port**, not 8000; check network/firewall between the dashboard host and Splunk.
+- **TLS certificate error**: for self-signed certs turn off “Verify TLS
+  certificate”, or import the Splunk CA into the system trust store.
+- **Empty index list**: the token's role cannot see any index — ask your
+  Splunk admin to grant read access to the target indexes.
+- **Zeros in the data**: `license_usage` / `per_index_thruput` live in
+  `_internal`; history older than its retention cannot be queried.
 
 ## License
 

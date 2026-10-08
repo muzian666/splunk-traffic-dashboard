@@ -64,6 +64,29 @@ app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
 # --------------------------------------------------------------------------- #
+# Localization (progress + status messages; UI sends ?lang= / "lang" field)
+# --------------------------------------------------------------------------- #
+_PROGRESS_MSGS = {
+    "discover": ("正在发现索引列表…", "Discovering index list…"),
+    "tracking": ("共跟踪 {n} 个索引（{names}）", "Tracking {n} indexes ({names})"),
+    "events": ("正在查询每日事件数 · {span}", "Querying daily event counts · {span}"),
+    "license": ("正在查询摄入流量 license_usage · {span}", "Querying ingest volume (license_usage) · {span}"),
+    "thruput": ("正在查询落盘量 per_index_thruput · {span}", "Querying disk write (per_index_thruput) · {span}"),
+    "dbinspect": ("正在查询当前磁盘占用 dbinspect", "Querying current disk usage (dbinspect)"),
+    "range": ("正在查询记录范围（全时间）", "Querying record range (all-time)"),
+}
+
+
+def _pmsg(lang: str, key: str, **kw) -> str:
+    zh, en = _PROGRESS_MSGS[key]
+    return (en if lang == "en" else zh).format(**kw)
+
+
+def _L(lang: str, zh: str, en: str) -> str:
+    return en if lang == "en" else zh
+
+
+# --------------------------------------------------------------------------- #
 # Splunk REST
 # --------------------------------------------------------------------------- #
 def _splunk_client(overrides: dict | None = None,
@@ -183,10 +206,10 @@ def discover_indexes(overrides: dict | None = None, force: bool = False) -> list
             names = sorted(r["index"] for r in rows
                            if not str(r.get("index", "")).startswith("_"))
         except Exception as e:  # noqa: BLE001
-            raise RuntimeError(f"索引列表获取失败：{_friendly_conn_error(e)}")
+            raise RuntimeError(_friendly_conn_error(e))
 
     if not names and err:
-        raise RuntimeError(f"索引列表获取失败：{_friendly_conn_error(err)}")
+        raise RuntimeError(_friendly_conn_error(err))
     if not overrides:
         with _IDX_LOCK:
             _IDX_CACHE["ts"], _IDX_CACHE["names"] = time.time(), names
@@ -219,15 +242,18 @@ def filter_indexes(names: list[str], include: list[str], exclude: list[str]) -> 
     return out
 
 
-def _friendly_conn_error(e: Exception) -> str:
+def _friendly_conn_error(e: Exception, lang: str = "zh") -> str:
     s = str(e)
     low = s.lower()
     if "connect" in low or "getaddrinfo" in low or "timed out" in low or "ssl" in low:
-        return "Splunk 暂不可达（请检查地址 / 8089 端口 / 防火墙；自签名证书请关闭证书校验）"
+        return _L(lang,
+                  "Splunk 暂不可达（请检查地址 / 8089 端口 / 防火墙；自签名证书请关闭证书校验）",
+                  "Splunk unreachable (check the URL / port 8089 / firewall; disable "
+                  "certificate verification for self-signed certs)")
     return s[:180]
 
 
-def index_status() -> dict:
+def index_status(lang: str = "zh") -> dict:
     """Snapshot for the UI: tracked vs available indexes + newly appeared."""
     d = CONFIG.as_dict()
     mode = "manual" if d["indexes"] else "auto"
@@ -235,14 +261,16 @@ def index_status() -> dict:
     if not CONFIG.credentials_present():
         return {"ok": False, "configured": False, "mode": mode, "tracked": tracked,
                 "available": [], "new": [], "last_scan_ts": _IDX_CACHE["ts"],
-                "rescan_minutes": d["index_rescan_minutes"], "message": "尚未配置 Splunk 连接"}
+                "rescan_minutes": d["index_rescan_minutes"],
+                "message": _L(lang, "尚未配置 Splunk 连接", "Splunk not configured")}
     try:
         available = discover_indexes()
     except Exception as e:  # noqa: BLE001 - surface as status, not a 500
         return {"ok": False, "configured": True, "mode": mode, "tracked": tracked,
                 "available": [], "new": [], "last_scan_ts": _IDX_CACHE["ts"],
                 "rescan_minutes": d["index_rescan_minutes"],
-                "message": f"自动发现失败：{_friendly_conn_error(e)}"}
+                "message": _L(lang, "自动发现失败：", "Auto-discovery failed: ")
+                           + _friendly_conn_error(e, lang)}
     if mode == "auto":
         tracked = filter_indexes(available, d["index_include"], d["index_exclude"])
     seen = set(d.get("indexes_seen") or [])
@@ -316,7 +344,7 @@ def date_list(earliest: float, latest: float) -> tuple[list[str], bool]:
 
 
 def build_dataset(earliest: float, latest: float,
-                  progress=None) -> dict:
+                  progress=None, lang: str = "zh") -> dict:
     """Run the Splunk searches and assemble the frontend payload.
 
     `progress(msg)` (optional) is called before each stage so the streaming
@@ -331,17 +359,17 @@ def build_dataset(earliest: float, latest: float,
     total = 5 + (1 if auto_mode else 0)
     step_n = 0
 
-    def step(msg: str) -> None:
+    def step(key: str, **kw) -> None:
         nonlocal step_n
         step_n += 1
-        pr(f"{step_n}/{total} {msg}")
+        pr(f"{step_n}/{total} {_pmsg(lang, key, **kw)}")
 
     if auto_mode:
-        step("正在发现索引列表…")
+        step("discover")
     indexes = effective_indexes()
     if auto_mode:
         names = ", ".join(indexes[:3]) + ("…" if len(indexes) > 3 else "")
-        pr(f"共跟踪 {len(indexes)} 个索引（{names}）")
+        pr(_pmsg(lang, "tracking", n=len(indexes), names=names))
 
     dates, partial = date_list(earliest, latest)
     span = f"{dates[0]} ~ {dates[-1]}"
@@ -356,7 +384,7 @@ def build_dataset(earliest: float, latest: float,
     est, lst = str(int(earliest)), str(int(latest))
 
     t0 = time.time()
-    step(f"正在查询每日事件数 · {span}")
+    step("events", span=span)
     for row in splunk_search(
             f"| tstats count where index IN ({_in_list(indexes)}) by _time span=1d, index",
             est, lst):
@@ -366,7 +394,7 @@ def build_dataset(earliest: float, latest: float,
     timings["events"] = int((time.time() - t0) * 1000)
 
     t0 = time.time()
-    step(f"正在查询摄入流量 license_usage · {span}")
+    step("license", span=span)
     for row in splunk_search(
             f"index=_internal source=*license_usage.log type=Usage idx IN ({_in_list(indexes)}) "
             f"| bin _time span=1d | stats sum(b) as bytes by _time, idx",
@@ -377,7 +405,7 @@ def build_dataset(earliest: float, latest: float,
     timings["license_bytes"] = int((time.time() - t0) * 1000)
 
     t0 = time.time()
-    step(f"正在查询落盘量 per_index_thruput · {span}")
+    step("thruput", span=span)
     for row in splunk_search(
             f"index=_internal source=*metrics.log group=per_index_thruput series IN ({_in_list(indexes)}) "
             f"| bin _time span=1d | stats sum(kb) as kb by _time, series",
@@ -388,7 +416,7 @@ def build_dataset(earliest: float, latest: float,
     timings["disk_write"] = int((time.time() - t0) * 1000)
 
     t0 = time.time()
-    step("正在查询当前磁盘占用 dbinspect")
+    step("dbinspect")
     for row in splunk_search(
             f"| dbinspect index=* | search index IN ({_in_list(indexes)}) "
             f"| eval mb=coalesce(sizeOnDiskMB, if(isnull(sizeOnDisk), 0, sizeOnDisk/1048576)) "
@@ -401,7 +429,7 @@ def build_dataset(earliest: float, latest: float,
 
     # all-time first/last record per index (data coverage, not window-limited)
     t0 = time.time()
-    step("正在查询记录范围（全时间）")
+    step("range")
     for row in splunk_search(
             f"| tstats min(_time) as ft, max(_time) as lt where index IN ({_in_list(indexes)}) by index",
             "0"):
@@ -500,7 +528,7 @@ def save_cache(cache: dict) -> None:
 
 
 def get_dataset(earliest: float, latest: float, refresh: bool,
-                progress=None) -> dict:
+                progress=None, lang: str = "zh") -> dict:
     cache = load_cache()
     key = f"{CONFIG.fingerprint()}:{int(earliest)}:{int(latest)}"
     entry = cache.get(key)
@@ -508,7 +536,7 @@ def get_dataset(earliest: float, latest: float, refresh: bool,
         entry["data"]["cached"] = True
         return entry["data"]
     try:
-        data = build_dataset(earliest, latest, progress=progress)
+        data = build_dataset(earliest, latest, progress=progress, lang=lang)
     except Exception as e:
         log.exception("Splunk fetch failed")
         if entry:
@@ -610,7 +638,8 @@ def api_data(days: int | None = Query(None, ge=1, le=365),
 def api_data_stream(days: int | None = Query(None, ge=1, le=365),
                     from_: float | None = Query(None, alias="from"),
                     to_: float | None = Query(None, alias="to"),
-                    refresh: bool = False) -> StreamingResponse:
+                    refresh: bool = False,
+                    lang: str = Query("zh")) -> StreamingResponse:
     """SSE variant of /api/data: emits `progress` events (live query status)
     while the dataset is being built, then one `done` (or `error`) event."""
     f, t = _resolve_range(days, from_, to_)
@@ -619,7 +648,8 @@ def api_data_stream(days: int | None = Query(None, ge=1, le=365),
     def worker() -> None:
         try:
             data = get_dataset(f, t, refresh,
-                               progress=lambda m: q.put(("progress", m)))
+                               progress=lambda m: q.put(("progress", m)),
+                               lang=lang)
             q.put(("done", data))
         except HTTPException as e:
             q.put(("error", str(e.detail)))
@@ -688,6 +718,7 @@ def api_config_save(payload: dict | None = None) -> dict:
 
 @app.post("/api/config/test")
 def api_config_test(payload: dict | None = None) -> dict:
+    lang = (payload or {}).get("lang") or "zh"
     over = _conn_overrides(payload)
     d = CONFIG.as_dict()
     if over:
@@ -696,45 +727,57 @@ def api_config_test(payload: dict | None = None) -> dict:
                 d[k] = v
     url = str(d["splunk_url"]).rstrip("/")
     if not url:
-        return {"ok": False, "message": "请先填写 Splunk 地址"}
+        return {"ok": False, "message": _L(lang, "请先填写 Splunk 地址", "Enter the Splunk URL first")}
     if not (d["splunk_token"] or (d["splunk_username"] and d["splunk_password"])):
-        return {"ok": False, "message": "请填写 Token 或用户名/密码"}
+        return {"ok": False, "message": _L(lang, "请填写 Token 或用户名/密码",
+                                           "Provide a token or username/password")}
     try:
         client, base = _splunk_client(over, timeout=10.0)
         with client:
             r = client.get(f"{base}/services/server/info", params={"output_mode": "json"})
         if r.status_code == 401:
-            return {"ok": False, "message": "认证失败 (401)：Token 或用户名/密码不正确"}
+            return {"ok": False, "message": _L(lang, "认证失败 (401)：Token 或用户名/密码不正确",
+                                               "Authentication failed (401): wrong token or username/password")}
         if r.status_code >= 400:
             return {"ok": False, "message": f"Splunk HTTP {r.status_code}: {r.text[:200]}"}
         content = r.json()["entry"][0]["content"]
+        msg = _L(lang, "连接成功：Splunk {v}（{s}）", "Connected: Splunk {v} ({s})").format(
+            v=content.get("version", "?"), s=content.get("serverName", "?"))
         return {"ok": True, "version": content.get("version", "?"),
-                "server_name": content.get("serverName", "?"),
-                "message": f"连接成功：Splunk {content.get('version', '?')}（{content.get('serverName', '?')}）"}
+                "server_name": content.get("serverName", "?"), "message": msg}
     except Exception as e:  # noqa: BLE001 - surface a friendly message to the UI
         msg = str(e)
         if "certificate" in msg.lower() or "ssl" in msg.lower():
-            return {"ok": False, "message": "TLS 证书校验失败：自签名证书请关闭“验证 TLS 证书”，或将 CA 导入系统信任库"}
+            return {"ok": False, "message": _L(
+                lang, "TLS 证书校验失败：自签名证书请关闭“验证 TLS 证书”，或将 CA 导入系统信任库",
+                "TLS verification failed: disable “Verify TLS certificate” for self-signed "
+                "certs, or import the CA into the system trust store")}
         if "connect" in msg.lower() or "timed out" in msg.lower() or "getaddrinfo" in msg.lower():
-            return {"ok": False, "message": "无法连接：请确认地址与 8089 管理端口可达（注意不是网页端口 8000）"}
-        return {"ok": False, "message": f"连接失败：{msg[:200]}"}
+            return {"ok": False, "message": _L(
+                lang, "无法连接：请确认地址与 8089 管理端口可达（注意不是网页端口 8000）",
+                "Cannot connect: make sure the management port 8089 is reachable "
+                "(not the web port 8000)")}
+        return {"ok": False, "message": _L(lang, "连接失败：", "Connection failed: ") + msg[:200]}
 
 
 @app.post("/api/indexes/discover")
 def api_indexes_discover(payload: dict | None = None) -> dict:
+    lang = (payload or {}).get("lang") or "zh"
     over = _conn_overrides(payload)
     if not over and not CONFIG.credentials_present():
-        return {"ok": False, "message": "尚未配置 Splunk 连接，请先完成上一步"}
+        return {"ok": False, "message": _L(lang, "尚未配置 Splunk 连接，请先完成上一步",
+                                           "Splunk not configured — finish the previous step first")}
     try:
         names = discover_indexes(overrides=over)
         return {"ok": True, "indexes": names}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "message": str(e)[:300]}
+        return {"ok": False, "message": _L(lang, "索引列表获取失败：", "Index discovery failed: ")
+                                          + str(e)[:280]}
 
 
 @app.get("/api/indexes/status")
-def api_indexes_status() -> dict:
-    return index_status()
+def api_indexes_status(lang: str = Query("zh")) -> dict:
+    return index_status(lang)
 
 
 @app.get("/api/health")
