@@ -1,0 +1,963 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Splunk 流量看板</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+<script src="/static/echarts.min.js"></script>
+<style>
+:root{
+  --bg:#f5f7fb; --card:#ffffff; --card-border:#e4e9f2;
+  --text:#1a2333; --muted:#5a6478; --faint:#8b93a5;
+  --accent:#0891b2; --accent2:#6366f1;
+  --good:#10b981; --warn:#d97706; --bad:#dc2626;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:
+    radial-gradient(1100px 500px at 85% -10%, rgba(99,102,241,.07), transparent 60%),
+    radial-gradient(900px 420px at -10% 0%, rgba(8,145,178,.05), transparent 55%),
+    var(--bg);
+  color:var(--text);
+  font-family:-apple-system,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  font-size:14px; line-height:1.5; padding-bottom:40px;
+}
+a{color:var(--accent);cursor:pointer}
+.wrap{max-width:1560px;margin:0 auto;padding:0 20px}
+
+/* ---------- top bar ---------- */
+header{
+  position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
+  background:rgba(255,255,255,.85);border-bottom:1px solid var(--card-border);
+}
+.topbar{display:flex;align-items:center;gap:14px;padding:14px 0;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:12px;margin-right:auto}
+.logo{
+  width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#22d3ee,#6366f1);font-size:19px;box-shadow:0 4px 18px rgba(56,120,255,.35);
+}
+.brand h1{font-size:19px;font-weight:700;letter-spacing:.5px}
+.brand .sub{font-size:12px;color:var(--muted)}
+.chip{
+  font-size:12px;color:var(--muted);border:1px solid var(--card-border);
+  padding:3px 10px;border-radius:999px;background:var(--card);white-space:nowrap;
+}
+.chip b{color:var(--text);font-weight:600}
+.chip.mock{color:#fde68a;border-color:rgba(251,191,36,.35);background:rgba(251,191,36,.08)}
+.chip.stale{color:#fca5a5;border-color:rgba(248,113,113,.35);background:rgba(248,113,113,.08)}
+.btn{
+  border:1px solid var(--card-border);background:var(--card);color:var(--text);
+  padding:7px 14px;border-radius:10px;font-size:13px;cursor:pointer;transition:.15s;
+}
+.btn:hover{border-color:rgba(34,211,238,.5);color:var(--accent)}
+.btn.primary{background:linear-gradient(135deg,rgba(34,211,238,.18),rgba(99,102,241,.18));border-color:rgba(99,102,241,.45)}
+
+/* ---------- filter bar ---------- */
+.filterbar{display:flex;align-items:center;gap:12px;margin:18px 0;flex-wrap:wrap}
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--card-border);border-radius:10px;overflow:hidden;background:var(--card)}
+.seg button{
+  border:0;background:transparent;color:var(--muted);padding:7px 15px;cursor:pointer;
+  font-size:13px;transition:.15s;border-right:1px solid var(--card-border);
+}
+.seg button:last-child{border-right:0}
+.seg button.on{background:linear-gradient(135deg,#0891b2,#6366f1);color:#fff;font-weight:600}
+.idxwrap{position:relative}
+.idxpanel{
+  position:absolute;top:calc(100% + 8px);left:0;z-index:60;width:560px;max-width:88vw;
+  background:#ffffff;border:1px solid var(--card-border);border-radius:12px;padding:12px;
+  box-shadow:0 18px 50px rgba(23,42,84,.18);
+}
+.idxpanel .acts{display:flex;gap:14px;margin-bottom:10px;font-size:12px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;max-height:220px;overflow:auto}
+.chipx{
+  display:inline-flex;align-items:center;gap:6px;border:1px solid var(--card-border);
+  padding:5px 11px;border-radius:999px;font-size:12.5px;color:var(--muted);cursor:pointer;
+  transition:.12s;user-select:none;background:var(--card);
+}
+.chipx.on{color:#0e7490;border-color:rgba(8,145,178,.55);background:rgba(8,145,178,.10)}
+.chipx .dot{width:8px;height:8px;border-radius:50%}
+.autohint{font-size:12px;color:var(--faint)}
+#customPick input{
+  background:var(--card);border:1px solid var(--card-border);border-radius:8px;
+  color:var(--text);padding:6px 8px;font-size:12.5px;font-family:inherit;color-scheme:light;
+}
+
+/* ---------- KPI ---------- */
+.kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:16px}
+.kpi{
+  background:var(--card);border:1px solid var(--card-border);border-radius:14px;
+  padding:16px 18px;position:relative;overflow:hidden;box-shadow:0 1px 3px rgba(23,42,84,.06);
+}
+.kpi::before{
+  content:"";position:absolute;inset:0 auto 0 0;width:3px;
+  background:linear-gradient(180deg,var(--accent),var(--accent2));opacity:.85;
+}
+.kpi .lbl{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:7px}
+.kpi .val{font-size:27px;font-weight:750;margin-top:6px;letter-spacing:.3px;font-variant-numeric:tabular-nums}
+.kpi .val small{font-size:13px;color:var(--muted);font-weight:500;margin-left:2px}
+.kpi .sub{font-size:11.5px;color:var(--faint);margin-top:3px}
+.kpi .ico{font-size:14px;filter:saturate(.9)}
+
+/* ---------- charts ---------- */
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
+.card{
+  background:var(--card);border:1px solid var(--card-border);border-radius:14px;
+  padding:14px 16px 8px;margin-bottom:14px;box-shadow:0 1px 3px rgba(23,42,84,.06);
+}
+.span8{grid-column:span 8}.span6{grid-column:span 6}.span4{grid-column:span 4}.span12{grid-column:span 12}
+.card h3{font-size:14.5px;font-weight:650;margin-bottom:2px;display:flex;align-items:baseline;gap:10px}
+.card h3 .u{font-size:11.5px;color:var(--faint);font-weight:400}
+.chart{width:100%;height:330px}
+#chartHeat{height:360px}#chartDiskNow{height:360px}
+
+/* ---------- tables ---------- */
+.tblcard{margin-top:4px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:9px 12px;text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+thead th{
+  color:var(--muted);font-weight:600;font-size:12px;border-bottom:1px solid var(--card-border);
+  cursor:pointer;user-select:none;position:sticky;top:0;background:#ffffff;z-index:1;
+}
+thead th:hover{color:var(--accent)}
+tbody tr{border-bottom:1px solid rgba(23,42,84,.06)}
+tbody tr:hover{background:rgba(8,145,178,.06)}
+td.idx{font-family:Consolas,Menlo,monospace;font-size:12.5px;color:#475069}
+tbody tr.total td{font-weight:700;border-top:2px solid var(--card-border);background:rgba(8,145,178,.05)}
+.pctbar{display:inline-flex;align-items:center;gap:8px}
+.track{width:110px;height:6px;border-radius:4px;background:rgba(23,42,84,.10);overflow:hidden}
+.fill{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,#0891b2,#6366f1)}
+.tblwrap{max-height:480px;overflow:auto;border-radius:8px}
+.tblwrap.full{max-height:none;overflow:visible}
+details.tblcard summary{
+  cursor:pointer;padding:12px 2px;color:var(--muted);font-size:13.5px;user-select:none;
+}
+details.tblcard summary:hover{color:var(--accent)}
+
+/* ---------- footer / misc ---------- */
+footer{margin-top:22px;color:var(--faint);font-size:12px;line-height:1.9}
+footer b{color:var(--muted)}
+#toast{
+  position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
+  background:rgba(127,29,29,.92);color:#fecaca;border:1px solid rgba(248,113,113,.4);
+  padding:10px 18px;border-radius:10px;font-size:13px;opacity:0;transition:.25s;z-index:99;
+  max-width:80vw;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#busy{position:fixed;top:0;left:0;right:0;height:2px;z-index:100;overflow:hidden;display:none}
+#busy.on{display:block}
+#busy::before{
+  content:"";display:block;height:100%;width:40%;
+  background:linear-gradient(90deg,transparent,#22d3ee,transparent);
+  animation:slide 1s linear infinite;
+}
+@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(350%)}}
+
+/* ---------- setup wizard & settings modal ---------- */
+.mask{position:fixed;inset:0;z-index:90;display:flex;align-items:flex-start;justify-content:center;
+  background:rgba(15,23,42,.45);backdrop-filter:blur(6px);overflow:auto;padding:44px 16px}
+.wcard{background:#fff;border:1px solid var(--card-border);border-radius:16px;max-width:680px;width:100%;
+  box-shadow:0 30px 80px rgba(2,6,23,.35);padding:26px 28px 22px;margin-bottom:44px}
+.whead{display:flex;align-items:center;gap:12px}
+.whead .logo{width:38px;height:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#22d3ee,#6366f1);font-size:19px;box-shadow:0 4px 18px rgba(56,120,255,.35)}
+.whead h2{font-size:18px;letter-spacing:.3px}
+.whead .sub{font-size:12px;color:var(--muted)}
+.wclose{margin-left:auto;border:0;background:transparent;font-size:24px;color:var(--faint);cursor:pointer;line-height:1;padding:0 4px}
+.wclose:hover{color:var(--bad)}
+.steps{display:flex;gap:8px;margin:18px 0 20px}
+.steps .st{flex:1;text-align:center;font-size:12px;color:var(--faint);border-bottom:2px solid var(--card-border);padding-bottom:7px}
+.steps .st.on{color:var(--accent);border-color:var(--accent);font-weight:600}
+.wstep{display:none}.wstep.on{display:block}
+.wstep p{color:var(--muted);margin-bottom:10px}
+.wstep ul.check{margin:8px 0 8px 4px;list-style:none}
+.wstep ul.check li{margin:6px 0 6px 20px;position:relative;color:var(--text)}
+.wstep ul.check li::before{content:"✓";position:absolute;left:-20px;color:var(--good);font-weight:700}
+details.guide{border:1px dashed var(--card-border);border-radius:10px;padding:10px 14px;margin:12px 0;background:rgba(99,102,241,.04)}
+details.guide summary{cursor:pointer;font-weight:600;font-size:13px;color:var(--accent);user-select:none}
+details.guide ol{margin:8px 0 4px 20px;color:var(--muted);font-size:13px}
+details.guide ol li{margin:4px 0}
+details.guide pre{background:#0f172a;color:#dbe2f0;border-radius:8px;padding:10px 12px;font-size:12px;overflow:auto;margin:8px 0}
+details.guide code{font-family:Consolas,Menlo,monospace}
+.frow{margin:12px 0}
+.frow label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:5px;font-weight:600}
+.fi{width:100%;background:#fff;border:1px solid var(--card-border);border-radius:9px;padding:8px 10px;
+  font-size:13.5px;color:var(--text);font-family:inherit;color-scheme:light}
+.fi:focus{outline:none;border-color:rgba(34,211,238,.6)}
+.fi:disabled{background:#f1f5f9;color:var(--faint);cursor:not-allowed}
+.fhint{font-size:11.5px;color:var(--faint);margin-top:4px}
+.authtabs{display:inline-flex;border:1px solid var(--card-border);border-radius:9px;overflow:hidden;margin-bottom:4px}
+.authtabs button{border:0;background:transparent;padding:6px 14px;font-size:12.5px;color:var(--muted);cursor:pointer;transition:.15s}
+.authtabs button.on{background:linear-gradient(135deg,#0891b2,#6366f1);color:#fff;font-weight:600}
+.tmsg{font-size:12.5px;margin-left:10px;color:var(--faint)}
+.tmsg.ok{color:var(--good)}.tmsg.bad{color:var(--bad)}
+.rowend{display:flex;justify-content:flex-end;gap:10px;align-items:center;margin-top:18px;flex-wrap:wrap}
+.rowend a{margin-right:auto}
+.idxbox{border:1px solid var(--card-border);border-radius:10px;padding:10px;margin-top:8px}
+.radio{display:flex;gap:20px;margin:8px 0;font-size:13px;color:var(--text);flex-wrap:wrap}
+.radio label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+fieldset.wsec{border:1px solid var(--card-border);border-radius:12px;padding:14px 16px 8px;margin:14px 0}
+fieldset.wsec legend{font-size:13px;font-weight:700;padding:0 6px;color:var(--text)}
+@media (max-width:1280px){.kpis{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:1100px){.span8,.span6,.span4{grid-column:span 12}}
+@media (max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}.brand h1{font-size:16px}}
+</style>
+</head>
+<body>
+<div id="busy"></div>
+<header><div class="wrap topbar">
+  <div class="brand">
+    <div class="logo">📊</div>
+    <div>
+      <h1>Splunk 流量看板</h1>
+      <div class="sub">每日新增日志量 · 摄入流量 · 落盘与磁盘占用</div>
+    </div>
+  </div>
+  <span class="chip" id="chipWhen">数据时间 —</span>
+  <span class="chip mock hidden" id="chipMock" style="display:none">演示数据模式</span>
+  <span class="chip stale hidden" id="chipStale" style="display:none">Splunk 暂不可达 · 显示上次缓存</span>
+  <button class="btn" id="btnRefresh" title="立即重新查询 Splunk">↻ 刷新</button>
+  <button class="btn primary" id="btnCsv">⬇ 导出 CSV</button>
+  <button class="btn" id="btnSettings" title="Splunk 连接与看板设置">⚙ 设置</button>
+</div></header>
+
+<div class="wrap">
+  <!-- filters -->
+  <div class="filterbar">
+    <div class="seg" id="segRange">
+      <button data-r="today">今日</button>
+      <button data-r="yday">昨日</button>
+      <button data-r="7">近 7 天</button>
+      <button data-r="14">近 14 天</button>
+      <button data-r="30" class="on">近 30 天</button>
+      <button data-r="60">近 60 天</button>
+      <button data-r="90">近 90 天</button>
+      <button data-r="custom">自定义</button>
+    </div>
+    <span id="customPick" style="display:none;align-items:center;gap:6px">
+      <input type="date" id="dFrom"> <span style="color:var(--faint)">~</span> <input type="date" id="dTo">
+      <button class="btn" id="dApply">应用</button>
+    </span>
+    <div class="idxwrap">
+      <button class="btn" id="idxBtn">索引：全部 (15) ▾</button>
+      <div class="idxpanel" id="idxPanel" style="display:none">
+        <div class="acts"><a id="idxAll">全选</a><a id="idxNone">清空</a></div>
+        <div class="chips" id="idxChips"></div>
+      </div>
+    </div>
+    <span class="chip" id="chipToday" style="display:none">今日数据未完整</span>
+    <span class="autohint" style="margin-left:auto">每 5 分钟自动刷新</span>
+  </div>
+
+  <!-- KPI cards -->
+  <div class="kpis">
+    <div class="kpi"><div class="lbl"><span class="ico">🔢</span>日志总量</div><div class="val" id="kCount">—</div><div class="sub" id="kCountSub">—</div></div>
+    <div class="kpi"><div class="lbl"><span class="ico">📥</span>摄入流量总量</div><div class="val" id="kGb">—</div><div class="sub" id="kGbSub">—</div></div>
+    <div class="kpi"><div class="lbl"><span class="ico">⚡</span>日均摄入</div><div class="val" id="kAvg">—</div><div class="sub">统计窗口平均 · 完整日</div></div>
+    <div class="kpi"><div class="lbl"><span class="ico">🔺</span>峰值日摄入</div><div class="val" id="kPeak">—</div><div class="sub" id="kPeakSub">—</div></div>
+    <div class="kpi"><div class="lbl"><span class="ico">🕒</span><span id="kTodayName">今日实时</span></div><div class="val" id="kToday">—</div><div class="sub" id="kTodaySub">—</div></div>
+    <div class="kpi"><div class="lbl"><span class="ico">💾</span>当前磁盘占用</div><div class="val" id="kDisk">—</div><div class="sub" id="kDiskSub">—</div></div>
+  </div>
+
+  <!-- charts -->
+  <div class="grid">
+    <div class="card span8"><h3>每日摄入流量 <span class="u">GB · 按索引堆叠 · license 口径（进入 Splunk 的原始字节）</span></h3><div class="chart" id="chartIngest"></div></div>
+    <div class="card span4"><h3>流量占比 <span class="u">所选时间范围</span></h3><div class="chart" id="chartPie"></div></div>
+    <div class="card span6"><h3>每日新增日志数量 <span class="u">条 · 按索引堆叠</span></h3><div class="chart" id="chartCount"></div></div>
+    <div class="card span6"><h3>每日新增落盘量 <span class="u">GB · 按索引堆叠 · thruput 口径</span></h3><div class="chart" id="chartWrite"></div></div>
+    <div class="card span8"><h3>摄入流量热力图 <span class="u">GB · 索引 × 日期</span></h3><div class="chart" id="chartHeat"></div></div>
+    <div class="card span4"><h3>当前磁盘占用 <span class="u">GB · dbinspect 实时</span></h3><div class="chart" id="chartDiskNow"></div></div>
+  </div>
+
+  <!-- tables -->
+  <div class="card tblcard">
+    <h3>各索引汇总 <span class="u">点击列头排序 · “今日”列实时 · 索引行日均按其有数据的天数 · TOTAL 按窗口完整天数</span></h3>
+    <div class="tblwrap full"><table id="tblSum"><thead></thead><tbody></tbody></table></div>
+  </div>
+
+  <details class="card tblcard">
+    <summary>▸ 展开每日明细表（日期 × 索引，最新 600 行）</summary>
+    <div class="tblwrap"><table id="tblDetail"><thead></thead><tbody></tbody></table></div>
+  </details>
+
+  <footer>
+    <b>口径说明</b>：<b>摄入流量</b> = license_usage 原始字节数（进入 Splunk 的数据量，SOC 按流量计费建议以此为准，不含压缩）；
+    <b>落盘量</b> = metrics per_index_thruput（解析后写入索引的数据量）；<b>磁盘占用</b> = dbinspect sizeOnDisk（压缩后实际占用，含历史累积）。
+    三者数值依次递减属正常现象。历史深度受 _internal 索引保留期限制。<span id="ftQuery"></span>
+  </footer>
+</div>
+<!-- ========== first-run setup wizard ========== -->
+<div class="mask" id="setupMask" style="display:none">
+  <div class="wcard">
+    <div class="whead">
+      <div class="logo">📊</div>
+      <div>
+        <h2>Splunk 流量看板 · 初始化配置</h2>
+        <div class="sub">连接你的 Splunk，三步开始使用</div>
+      </div>
+      <button class="wclose" id="setupClose" title="关闭（将使用演示数据浏览）">×</button>
+    </div>
+    <div class="steps">
+      <span class="st on" data-s="1">1 · 连接前的准备</span>
+      <span class="st" data-s="2">2 · 配置 Splunk 连接</span>
+      <span class="st" data-s="3">3 · 选择跟踪的索引</span>
+    </div>
+
+    <div class="wstep on" data-s="1">
+      <p>本看板通过 <b>Splunk 管理 REST API（默认 8089 端口）</b>查询各索引的日志量、摄入流量与磁盘占用。开始配置前请确认：</p>
+      <ul class="check">
+        <li>运行看板的主机可以访问 Splunk 的 <b>8089 管理端口</b>（注意：不是网页控制台的 8000 端口）</li>
+        <li>持有一个有<b>搜索权限</b>的 Token，或有搜索权限的账号密码</li>
+        <li>Splunk 使用自签名证书时，可在下一步关闭“验证 TLS 证书”</li>
+      </ul>
+      <details class="guide">
+        <summary>❓ 没有 Token？点这里查看获取指引</summary>
+        <ol>
+          <li><b>Splunk 8.2 及以上</b>：登录 Splunk Web → <b>设置（Settings）→ TOKEN</b> → 新建令牌（New Token）→ 选择有效期与受众（audience，如 admin）→ 创建后<b>立即复制</b>（只显示一次）。</li>
+          <li><b>旧版本 / 页面里没有 TOKEN 入口</b>：让管理员执行（替换地址与账号）：
+<pre>curl -k -u admin:你的密码 https://&lt;splunk主机&gt;:8089/services/authorization/tokens \
+     -d name=traffic-dashboard -d output_mode=json
+# 返回 JSON 中的 "token" 字段即为 Bearer Token</pre></li>
+          <li>Token 对应的角色至少需要 <b>search 能力</b>，且能读取要统计的索引；不知道找谁要就问 Splunk 管理员。</li>
+          <li>也可以直接使用有搜索权限的<b>账号密码</b>（下一步选择“用户名 / 密码”方式）。</li>
+        </ol>
+      </details>
+      <div class="rowend">
+        <a id="wizDemo">暂不配置，先用演示数据看看 →</a>
+        <button class="btn primary" data-next="2">开始配置 →</button>
+      </div>
+    </div>
+
+    <div class="wstep" data-s="2">
+      <div class="frow">
+        <label>Splunk 管理地址（REST 8089 端口）</label>
+        <input class="fi" id="wizUrl" placeholder="https://splunk.example.com:8089" autocomplete="off" spellcheck="false">
+        <div class="fhint">协议 + 主机 + 8089 端口，例如 https://10.0.0.8:8089</div>
+      </div>
+      <div id="wizAuth">
+        <div class="authtabs">
+          <button class="atab on" data-m="token" type="button">Token（推荐）</button>
+          <button class="atab" data-m="basic" type="button">用户名 / 密码</button>
+        </div>
+        <div class="apane" data-m="token">
+          <div class="frow">
+            <label>Bearer Token</label>
+            <input class="fi" id="wizToken" type="password" placeholder="eyJhbGciOi…（Splunk Token）" autocomplete="off">
+            <div class="fhint">保存在本机 config.json 中，不会上传到任何地方</div>
+          </div>
+        </div>
+        <div class="apane" data-m="basic" style="display:none">
+          <div class="frow"><label>用户名</label><input class="fi" id="wizUser" autocomplete="off"></div>
+          <div class="frow"><label>密码</label><input class="fi" id="wizPass" type="password" autocomplete="off"></div>
+        </div>
+      </div>
+      <div class="frow" style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;color:var(--text)">
+          <input type="checkbox" id="wizVerify"> 验证 TLS 证书（自签名证书请保持不勾选）
+        </label>
+      </div>
+      <div class="frow" style="display:flex;align-items:center;flex-wrap:wrap">
+        <button class="btn primary" id="wizTest" type="button">⚡ 测试连接</button>
+        <span class="tmsg" id="wizTestMsg">先测试连接，通过后才能进入下一步</span>
+      </div>
+      <div class="rowend">
+        <button class="btn" data-prev="1" type="button">← 上一步</button>
+        <button class="btn primary" id="wizNext3" type="button" disabled>下一步 →</button>
+      </div>
+    </div>
+
+    <div class="wstep" data-s="3">
+      <p>选择要统计的索引。未配置 Splunk 前无法获取列表——如果上一步测试通过，点击下方按钮加载。</p>
+      <div class="frow" style="display:flex;align-items:center;flex-wrap:wrap">
+        <button class="btn" id="wizLoadIdx" type="button">↻ 从 Splunk 加载索引列表</button>
+        <span class="tmsg" id="wizIdxMsg"></span>
+      </div>
+      <div class="radio">
+        <label><input type="radio" name="wizIdxMode" value="auto" checked> 全部非内部索引（自动发现）</label>
+        <label><input type="radio" name="wizIdxMode" value="manual"> 手动选择</label>
+      </div>
+      <div class="idxbox" id="wizIdxBox" style="display:none">
+        <div class="acts" style="display:flex;gap:14px;margin-bottom:8px;font-size:12px"><a id="wizIdxAll">全选</a><a id="wizIdxNone">清空</a></div>
+        <div class="chips" id="wizIdxChips"><span class="fhint">点击“加载索引列表”后在这里勾选</span></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input class="fi" id="wizManual" placeholder="手动添加索引名（可含逗号分隔的多个）" style="flex:1">
+          <button class="btn" id="wizManualAdd" type="button">添加</button>
+        </div>
+      </div>
+      <div class="rowend">
+        <button class="btn" data-prev="2" type="button">← 上一步</button>
+        <button class="btn primary" id="wizSave" type="button">💾 保存并进入看板</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== settings modal ========== -->
+<div class="mask" id="setMask" style="display:none">
+  <div class="wcard">
+    <div class="whead">
+      <div class="logo">⚙</div>
+      <div><h2>设置</h2><div class="sub">Splunk 连接 · 跟踪索引 · 看板行为</div></div>
+      <button class="wclose" id="setClose" title="关闭">×</button>
+    </div>
+
+    <fieldset class="wsec">
+      <legend>Splunk 连接</legend>
+      <div class="frow">
+        <label>管理地址（REST 8089 端口）</label>
+        <input class="fi" id="setUrl" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="setAuth">
+        <div class="authtabs">
+          <button class="atab on" data-m="token" type="button">Token</button>
+          <button class="atab" data-m="basic" type="button">用户名 / 密码</button>
+        </div>
+        <div class="apane" data-m="token">
+          <div class="frow">
+            <label>Bearer Token</label>
+            <input class="fi" id="setToken" type="password" autocomplete="off">
+            <div class="fhint" id="setTokenHint"></div>
+          </div>
+        </div>
+        <div class="apane" data-m="basic" style="display:none">
+          <div class="frow"><label>用户名</label><input class="fi" id="setUser" autocomplete="off"></div>
+          <div class="frow"><label>密码</label><input class="fi" id="setPass" type="password" autocomplete="off"></div>
+        </div>
+      </div>
+      <div class="frow" style="display:flex;align-items:center;gap:22px;flex-wrap:wrap">
+        <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;color:var(--text)">
+          <input type="checkbox" id="setVerify"> 验证 TLS 证书
+        </label>
+        <button class="btn" id="setTest" type="button">⚡ 测试连接</button>
+        <span class="tmsg" id="setTestMsg"></span>
+      </div>
+    </fieldset>
+
+    <fieldset class="wsec">
+      <legend>跟踪索引</legend>
+      <div class="frow" style="display:flex;align-items:center;flex-wrap:wrap">
+        <button class="btn" id="setLoadIdx" type="button">↻ 从 Splunk 加载索引列表</button>
+        <span class="tmsg" id="setIdxMsg"></span>
+      </div>
+      <div class="radio">
+        <label><input type="radio" name="setIdxMode" value="auto"> 全部非内部索引（自动发现）</label>
+        <label><input type="radio" name="setIdxMode" value="manual"> 手动选择</label>
+      </div>
+      <div class="idxbox" id="setIdxBox" style="display:none">
+        <div class="acts" style="display:flex;gap:14px;margin-bottom:8px;font-size:12px"><a id="setIdxAll">全选</a><a id="setIdxNone">清空</a></div>
+        <div class="chips" id="setIdxChips"></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input class="fi" id="setManual" placeholder="手动添加索引名（可含逗号分隔的多个）" style="flex:1">
+          <button class="btn" id="setManualAdd" type="button">添加</button>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset class="wsec">
+      <legend>看板行为</legend>
+      <div class="frow" style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <div>
+          <label>缓存有效期（秒）</label>
+          <input class="fi" id="setTtl" type="number" min="30" max="86400">
+          <div class="fhint">Splunk 查询结果的复用时长，越大越省查询</div>
+        </div>
+        <div>
+          <label>演示数据模式</label>
+          <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-weight:400;margin-top:8px">
+            <input type="checkbox" id="setMock"> 使用假数据（不查询 Splunk）
+          </label>
+        </div>
+      </div>
+      <div class="frow">
+        <label>监听地址（修改后需重启服务）</label>
+        <input class="fi" id="setHostPort" readonly>
+      </div>
+    </fieldset>
+
+    <div class="rowend">
+      <a id="setRewiz">重新运行初始化向导</a>
+      <button class="btn" id="setCancel" type="button">取消</button>
+      <button class="btn primary" id="setSave" type="button">💾 保存设置</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const PALETTE=["#0891b2","#6366f1","#10b981","#ec4899","#f59e0b","#3b82f6","#8b5cf6","#22c55e","#f43f5e","#ea580c","#14b8a6","#a855f7","#ca8a04","#0ea5e9","#e11d48","#64748b"];
+let DATA=null, CUR=null, sel=new Set(), sortKey="gb_total", sortDir=-1;
+const charts={};
+const $=id=>document.getElementById(id);
+
+/* ---------------- helpers ---------------- */
+const colorOf=idx=>PALETTE[Math.abs(hashIdx(idx))%PALETTE.length];
+function hashIdx(s){let h=0;for(let i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))|0}return h}
+const fmtInt=n=>{n=+n||0;if(n>=1e8)return (n/1e8).toFixed(2)+" 亿";if(n>=1e4)return (n/1e4).toFixed(1)+" 万";return n.toLocaleString()};
+const fmtGB=v=>{v=+v||0;
+  if(v>=1024)return (v/1024).toFixed(2)+" TB";
+  if(v>=1)return v.toFixed(2)+" GB";
+  const mb=v*1024;
+  if(mb>=1)return (mb>=100?mb.toFixed(0):mb>=10?mb.toFixed(1):mb.toFixed(2))+" MB";
+  const kb=mb*1024;
+  if(kb>=1)return (kb>=100?kb.toFixed(0):kb.toFixed(1))+" KB";
+  return v>0?"<1 KB":"0";
+};
+const fmtD=s=>s?s.slice(5):"";
+const dates_last=d=>d.dates.length?d.dates[d.dates.length-1].slice(5):"";
+const tsDate=ts=>{const x=new Date(ts*1000);return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")+"-"+String(x.getDate()).padStart(2,"0")};
+const visible=()=>DATA?DATA.indexes.filter(i=>sel.has(i)):[];
+function toast(msg,ms=6000){const t=$("toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),ms)}
+function mkChart(id){const c=echarts.init($(id),null,{renderer:"canvas"});charts[id]=c;return c}
+const AX={axisLine:{lineStyle:{color:"rgba(23,42,84,.20)"}},axisTick:{show:false},axisLabel:{color:"#5a6478",fontSize:11}};
+const TIP={trigger:"axis",backgroundColor:"rgba(9,14,30,.96)",borderColor:"rgba(255,255,255,.12)",textStyle:{color:"#dbe2f0",fontSize:12},axisPointer:{type:"shadow",shadowStyle:{color:"rgba(23,42,84,.06)"}}};
+const LEGEND={type:"scroll",top:0,left:"center",icon:"roundRect",itemWidth:10,itemHeight:7,textStyle:{color:"#5a6478",fontSize:11},pageIconColor:"#5a6478",pageTextStyle:{color:"#5a6478"}};
+const GRID={left:58,right:18,top:44,bottom:56};
+const ZOOM=[{type:"slider",height:14,bottom:6,borderColor:"rgba(23,42,84,.15)",backgroundColor:"rgba(23,42,84,.05)",fillerColor:"rgba(59,130,246,.15)",textStyle:{color:"#5a6478",fontSize:10}},{type:"inside"}];
+
+function stackOption(dates,seriesMap,unit,first){
+  const names=Object.keys(seriesMap);
+  return {
+    color:names.map(colorOf),
+    tooltip:{...TIP,valueFormatter:v=>unit==="条"?fmtInt(v):fmtGB(v)},
+    legend:LEGEND,
+    grid:GRID,
+    xAxis:{type:"category",data:dates.map(fmtD),...AX,
+      axisLabel:{...AX.axisLabel,rotate:dates.length>22?45:0}},
+    yAxis:{type:"value",...AX,axisLabel:{...AX.axisLabel,formatter:v=>unit==="条"?(v>=1e4?(v/1e4)+"万":v):v}},
+    dataZoom:ZOOM,
+    series:names.map(n=>({name:n,type:"bar",stack:"t",emphasis:{focus:"series"},
+      barMaxWidth:26,itemStyle:{},data:seriesMap[n]}))
+  };
+}
+
+/* ---------------- view computation (client-side filtering) ---------------- */
+function view(){
+  const vis=visible(),dates=DATA.dates,n=dates.length;
+  const partial=!!DATA.partial_last;           // trailing day is in-progress today
+  const full=partial&&n>1?n-1:n;               // complete days used for totals
+  const hasToday=partial;
+  const totalGB=[],totalCnt=[];
+  for(let d=0;d<n;d++){
+    let g=0,c=0;
+    for(const i of vis){g+=DATA.gbs[i]?.[d]||0;c+=DATA.counts[i]?.[d]||0}
+    totalGB.push(g);totalCnt.push(c)
+  }
+  const rows=vis.map(i=>{
+    const g=DATA.gbs[i]||[],c=DATA.counts[i]||[];
+    let gt=0,ct=0,peak=0,pd="-",ad=0;
+    for(let d=0;d<full;d++){const gv=g[d]||0;gt+=gv;ct+=c[d]||0;if(gv>0)ad++;if(gv>peak){peak=gv;pd=dates[d]}}
+    let dw=0;for(let d=0;d<full;d++)dw+=DATA.disk_write[i]?.[d]||0;
+    const dr=(DATA.data_range||{})[i]||{};
+    return{index:i,gb_total:gt,count_total:ct,
+      today_cnt:hasToday?(c[n-1]||0):null,today_gb:hasToday?(g[n-1]||0):null,
+      gb_daily_avg:ad?gt/ad:0,active_days:ad,gb_peak:peak,gb_peak_date:pd,
+      first:dr.first||"—",last:dr.last||"—",first_ts:dr.first_ts||0,
+      disk_write_total:dw,disk_now:DATA.disk_now[i]||0};
+  });
+  const sumGB=rows.reduce((s,r)=>s+r.gb_total,0);
+  rows.forEach(r=>r.pct=sumGB?+(r.gb_total/sumGB*100).toFixed(2):0);
+  let pg=0,pgd="-";for(let d=0;d<full;d++)if(totalGB[d]>pg){pg=totalGB[d];pgd=dates[d]}
+  const sumAD=rows.reduce((s,r)=>s+r.active_days,0);
+  return{vis,dates,hasToday,full,totalGB,totalCnt,rows,kpi:{
+    count_total:totalCnt.slice(0,full).reduce((a,b)=>a+b,0),
+    gb_total:+totalGB.slice(0,full).reduce((a,b)=>a+b,0).toFixed(2),
+    gb_daily_avg:full?+(totalGB.slice(0,full).reduce((a,b)=>a+b,0)/full).toFixed(2):0,
+    gb_pooled_avg:sumAD?+(sumGB/sumAD).toFixed(2):0,
+    gb_peak:+pg.toFixed(2),gb_peak_date:pgd,
+    last_gb:+(totalGB[n-1]||0).toFixed(2),last_cnt:totalCnt[n-1]||0,
+    disk_now_total:+vis.reduce((s,i)=>s+(DATA.disk_now[i]||0),0).toFixed(2)
+  }};
+}
+
+/* ---------------- renders ---------------- */
+function renderKpis(v){
+  const k=v.kpi;
+  $("kCount").innerHTML=fmtInt(k.count_total)+"<small>条</small>";
+  $("kCountSub").textContent=`${v.vis.length} 个索引 · ${DATA.days} 天累计`;
+  $("kGb").textContent=fmtGB(k.gb_total);
+  $("kGbSub").textContent=`${DATA.days} 天累计 · 完整日`;
+  $("kAvg").textContent=fmtGB(k.gb_daily_avg);
+  $("kPeak").textContent=fmtGB(k.gb_peak);
+  $("kPeakSub").textContent=k.gb_peak_date!=="-"?`出现在 ${k.gb_peak_date}`:"—";
+  $("kTodayName").textContent=v.hasToday?"今日实时":`末日 ${dates_last(DATA)}`;
+  $("kToday").innerHTML=fmtGB(k.last_gb);
+  $("kTodaySub").textContent=v.hasToday?`今日 ${fmtInt(k.last_cnt)} 条 · 截至当前`:`${dates_last(DATA)} 全天 ${fmtInt(k.last_cnt)} 条`;
+  $("kDisk").textContent=fmtGB(k.disk_now_total);
+  $("kDiskSub").textContent=`${v.vis.length} 个索引合计`;
+}
+
+function renderCharts(v){
+  const dates=v.dates;
+  // stacked: ingest GB
+  charts.chartIngest.setOption({
+    ...stackOption(dates,Object.fromEntries(v.vis.map(i=>[i,DATA.gbs[i]||[]])),"GB"),
+    tooltip:{...TIP,formatter(ps){
+      let s=`<b>${DATA.dates[ps[0].dataIndex]}</b>${ps[0].dataIndex===dates.length-1&&DATA.partial_last?"（今日，未完）":""}<br/>`;
+      let tot=0;const items=ps.filter(p=>p.value>0).sort((a,b)=>b.value-a.value).slice(0,12);
+      items.forEach(p=>{tot+=p.value;s+=`${p.marker}${p.seriesName}：${fmtGB(p.value)}<br/>`});
+      if(ps.filter(p=>p.value>0).length>12)s+=`… 其余 ${ps.filter(p=>p.value>0).length-12} 项<br/>`;
+      return s+`<b>合计：${fmtGB(ps.reduce((a,p)=>a+(p.value||0),0))}</b>`;
+    }}
+  },true);
+  // stacked: counts
+  charts.chartCount.setOption(stackOption(dates,Object.fromEntries(v.vis.map(i=>[i,DATA.counts[i]||[]])),"条"),true);
+  // stacked: disk write
+  charts.chartWrite.setOption(stackOption(dates,Object.fromEntries(v.vis.map(i=>[i,DATA.disk_write[i]||[]])),"GB"),true);
+
+  // donut
+  const pieRows=[...v.rows].sort((a,b)=>b.gb_total-a.gb_total);
+  const total=pieRows.reduce((s,r)=>s+r.gb_total,0);
+  let main=pieRows.filter(r=>total&&r.gb_total/total>=0.012);
+  const rest=pieRows.filter(r=>!main.includes(r));
+  const pieData=main.map(r=>({name:r.index,value:+r.gb_total.toFixed(3),itemStyle:{color:colorOf(r.index)}}));
+  if(rest.length)pieData.push({name:`其他 ${rest.length} 项`,value:+rest.reduce((s,r)=>s+r.gb_total,0).toFixed(3),itemStyle:{color:"#475069"}});
+  charts.chartPie.setOption({
+    tooltip:{trigger:"item",backgroundColor:"rgba(9,14,30,.96)",borderColor:"rgba(255,255,255,.12)",textStyle:{color:"#dbe2f0",fontSize:12},formatter:p=>`${p.name}<br/><b>${fmtGB(p.value)}</b>（${p.percent}%）`},
+    title:{text:fmtGB(total),subtext:"总摄入",left:"center",top:"40%",textStyle:{color:"#1a2333",fontSize:21,fontWeight:700},subtextStyle:{color:"#8b93a5",fontSize:11}},
+    series:[{type:"pie",radius:["48%","72%"],center:["50%","47%"],avoidLabelOverlap:true,
+      itemStyle:{borderColor:"#ffffff",borderWidth:2},
+      label:{color:"#5a6478",fontSize:10.5,formatter:p=>p.percent>=3?`${p.name}\n${p.percent}%`:""},
+      labelLine:{length:10,length2:6,lineStyle:{color:"#c3cad9"}},
+      emphasis:{scaleSize:4},data:pieData}]
+  },true);
+
+  // heatmap
+  const hm=[];v.rows.forEach((r,yi)=>{(DATA.gbs[r.index]||[]).forEach((g,di)=>hm.push([di,yi,+g]))});
+  const nz=hm.map(x=>x[2]).filter(x=>x>0).sort((a,b)=>a-b);
+  const p95=nz.length?nz[Math.floor(nz.length*.95)]:1;
+  charts.chartHeat.setOption({
+    tooltip:{position:"top",backgroundColor:"rgba(9,14,30,.96)",borderColor:"rgba(255,255,255,.12)",textStyle:{color:"#dbe2f0",fontSize:12},
+      formatter:p=>{const idx=v.rows[p.data[1]].index,c=DATA.counts[idx]?.[p.data[0]]||0;
+        return `<b>${DATA.dates[p.data[0]]}${p.data[0]===dates.length-1&&DATA.partial_last?"（今日）":""}</b><br/>${idx}<br/>摄入 <b>${fmtGB(p.data[2])}</b> · ${fmtInt(c)} 条`}},
+    grid:{left:200,right:20,top:10,bottom:70},
+    xAxis:{type:"category",data:dates.map(fmtD),splitArea:{show:true,areaStyle:{color:["rgba(23,42,84,.02)","rgba(23,42,84,.045)"]}},...AX,axisLabel:{...AX.axisLabel,rotate:dates.length>22?45:0,fontSize:10}},
+    yAxis:{type:"category",data:v.rows.map(r=>r.index),...AX,axisLabel:{color:"#5a6478",fontSize:10.5,width:190,overflow:"truncate"}},
+    visualMap:{min:0,max:Math.max(p95,0.01),calculable:true,orient:"horizontal",left:"center",bottom:4,
+      textStyle:{color:"#5a6478",fontSize:10},inRange:{color:["#eef4fc","#cfe0f8","#a3c7ef","#6ba0e5","#f2a13c","#e04a38"]}},
+    series:[{type:"heatmap",data:hm,
+      itemStyle:{borderColor:"#ffffff",borderWidth:1},
+      emphasis:{itemStyle:{shadowBlur:6,shadowColor:"rgba(0,0,0,.5)"}}}]
+  },true);
+
+  // disk now horizontal bars
+  const dn=v.rows.map(r=>({name:r.index,value:r.disk_now})).filter(x=>x.value>0).sort((a,b)=>a.value-b.value);
+  charts.chartDiskNow.setOption({
+    tooltip:{trigger:"axis",backgroundColor:"rgba(9,14,30,.96)",borderColor:"rgba(255,255,255,.12)",textStyle:{color:"#dbe2f0",fontSize:12},valueFormatter:v=>fmtGB(v)},
+    grid:{left:200,right:56,top:8,bottom:24},
+    xAxis:{type:"value",...AX,axisLabel:{...AX.axisLabel,formatter:v=>v+" GB"}},
+    yAxis:{type:"category",data:dn.map(x=>x.name),...AX,axisLabel:{color:"#5a6478",fontSize:10.5,width:190,overflow:"truncate"}},
+    series:[{type:"bar",barMaxWidth:16,data:dn.map(x=>({value:x.value,itemStyle:{
+      borderRadius:[0,4,4,0],
+      color:new echarts.graphic.LinearGradient(0,0,1,0,[{offset:0,color:"#1d4ed8"},{offset:1,color:"#0891b2"}])
+    }})),
+    label:{show:true,position:"right",color:"#5a6478",fontSize:10.5,formatter:p=>fmtGB(p.value)}}]
+  },true);
+}
+
+function renderTables(v){
+  const cols=[
+    ["index","索引",r=>`<td class="idx"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${colorOf(r.index)};margin-right:7px"></span>${r.index}</td>`],
+    ["count_total","日志总量",r=>`<td>${fmtInt(r.count_total)}</td>`],
+    ["today_cnt","今日(条·GB)",r=>r.today_cnt==null?`<td style="color:var(--faint)">—</td>`:`<td>${fmtInt(r.today_cnt)}<span style="color:var(--faint);font-size:11px"> · ${fmtGB(r.today_gb)}</span></td>`],
+    ["gb_total","摄入流量 (GB)",r=>`<td><b>${fmtGB(r.gb_total)}</b></td>`],
+    ["gb_daily_avg","日均·活跃日 (GB)",r=>`<td>${fmtGB(r.gb_daily_avg)}<span style="color:var(--faint);font-size:11px"> /${r.active_days}天</span></td>`],
+    ["gb_peak","峰值日 (GB)",r=>`<td>${fmtGB(r.gb_peak)}<span style="color:var(--faint);font-size:11px"> @${r.gb_peak_date.slice(5)}</span></td>`],
+    ["first_ts","记录范围 (最早~最晚)",r=>`<td style="font-size:11px;color:var(--muted)">${r.first} ~ ${r.last}</td>`],
+    ["pct","占比",r=>`<td><span class="pctbar"><span class="track"><span class="fill" style="width:${r.pct>0?Math.max(r.pct*2.2,1.2):0}%"></span></span>${r.pct>0&&r.pct<0.01?"&lt;0.01%":r.pct+"%"}</span></td>`],
+    ["disk_write_total","落盘量 (GB)",r=>`<td>${fmtGB(r.disk_write_total)}</td>`],
+    ["disk_now","当前磁盘 (GB)",r=>`<td>${fmtGB(r.disk_now)}</td>`],
+  ];
+  const thead=$("tblSum").querySelector("thead");
+  thead.innerHTML="<tr>"+cols.map(c=>`<th data-k="${c[0]}">${c[1]}${sortKey===c[0]?(sortDir<0?" ▼":" ▲"):""}</th>`).join("")+"</tr>";
+  thead.querySelectorAll("th").forEach(th=>th.onclick=()=>{
+    const k=th.dataset.k;if(sortKey===k)sortDir*=-1;else{sortKey=k;sortDir=-1}
+    renderTables(v);
+  });
+  const rows=[...v.rows].sort((a,b)=>(a[sortKey]>b[sortKey]?1:a[sortKey]<b[sortKey]?-1:0)*sortDir);
+  let firstAll=Infinity,lastAll=0;
+  v.rows.forEach(r=>{if(r.first_ts){firstAll=Math.min(firstAll,r.first_ts);lastAll=Math.max(lastAll,(DATA.data_range?.[r.index]?.last_ts)||0)}});
+  const fstr=firstAll<Infinity?tsDate(firstAll):"—",lstr=lastAll?tsDate(lastAll):"—";
+  const totalHtml=`<tr class="total"><td class="idx">TOTAL</td><td>${fmtInt(v.kpi.count_total)}</td><td>${v.hasToday?`${fmtInt(v.rows.reduce((s,r)=>s+(r.today_cnt||0),0))}<span style="color:var(--faint);font-size:11px"> · ${fmtGB(v.rows.reduce((s,r)=>s+(r.today_gb||0),0))}</span>`:`<span style="color:var(--faint)">—</span>`}</td><td><b>${fmtGB(v.kpi.gb_total)}</b></td><td>${fmtGB(v.kpi.gb_daily_avg)}<span style="color:var(--faint);font-size:11px"> /${v.full}天</span></td><td>${fmtGB(v.kpi.gb_peak)}<span style="color:var(--faint);font-size:11px"> @${v.kpi.gb_peak_date.slice(5)}</span></td><td style="font-size:11px;color:var(--muted)">${fstr} ~ ${lstr}</td><td><span class="pctbar"><span class="track"><span class="fill" style="width:100%"></span></span>100%</span></td><td>${fmtGB(v.rows.reduce((s,r)=>s+r.disk_write_total,0))}</td><td>${fmtGB(v.kpi.disk_now_total)}</td></tr>`;
+  $("tblSum").querySelector("tbody").innerHTML=rows.map(r=>"<tr>"+cols.map(c=>c[2](r)).join("")+"</tr>").join("")+totalHtml;
+
+  // detail table
+  const det=[];const visSet=new Set(v.vis);
+  for(let d=v.dates.length-1;d>=0&&det.length<600;d--)
+    for(const i of v.vis){const g=DATA.gbs[i]?.[d]||0,c=DATA.counts[i]?.[d]||0;
+      det.push(`<tr><td>${DATA.dates[d]}${d===v.dates.length-1&&DATA.partial_last?' <span style="color:var(--warn);font-size:11px">今日</span>':""}</td><td class="idx">${i}</td><td>${fmtInt(c)}</td><td>${fmtGB(g)}</td><td>${fmtGB(DATA.disk_write[i]?.[d]||0)}</td></tr>`)}
+  $("tblDetail").querySelector("thead").innerHTML="<tr><th>日期</th><th>索引</th><th>日志数（条）</th><th>摄入（GB）</th><th>落盘（GB）</th></tr>";
+  $("tblDetail").querySelector("tbody").innerHTML=det.join("");
+}
+
+function renderFilters(){
+  const chips=$("idxChips");
+  chips.innerHTML=DATA.indexes.map(i=>`<span class="chipx ${sel.has(i)?"on":""}" data-i="${i}"><span class="dot" style="background:${colorOf(i)}"></span>${i}</span>`).join("");
+  chips.querySelectorAll(".chipx").forEach(el=>el.onclick=()=>{
+    const i=el.dataset.i;sel.has(i)?sel.delete(i):sel.add(i);
+    if(!sel.size){toast("至少保留一个索引");sel.add(i);return}
+    renderFilters();renderAll();
+  });
+  $("idxBtn").textContent=`索引：${sel.size===DATA.indexes.length?"全部":sel.size+" 项"} (${sel.size}/${DATA.indexes.length}) ▾`;
+}
+
+function renderAll(){
+  const v=view();
+  renderKpis(v);renderCharts(v);renderTables(v);
+}
+
+/* ---------------- data loading ---------------- */
+function rangeFor(kind){
+  const now=new Date();
+  const mid=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime()/1000;
+  if(kind==="today")return{kind,from:mid(now),to:now.getTime()/1000,label:"今日"};
+  if(kind==="yday"){const y=new Date(now);y.setDate(y.getDate()-1);
+    return{kind,from:mid(y),to:mid(now),label:"昨日"}}
+  if(kind==="custom")return null;
+  const n=parseInt(kind,10);
+  const s=new Date(now);s.setDate(s.getDate()-n);
+  return{kind,from:mid(s),to:now.getTime()/1000,label:`近 ${n} 天`};
+}
+async function loadRange(r,force){
+  CUR=r;
+  $("busy").classList.add("on");
+  try{
+    const q=new URLSearchParams({from:String(Math.floor(r.from)),to:String(Math.floor(r.to))});
+    if(force)q.set("refresh","1");
+    const res=await fetch(`/api/data?${q}`);
+    if(!res.ok){const e=await res.json().catch(()=>({detail:res.statusText}));throw new Error(e.detail||`HTTP ${res.status}`)}
+    const d=await res.json();
+    DATA=d;
+    if(!sel.size||![...sel].every(i=>DATA.indexes.includes(i)))sel=new Set(DATA.indexes);
+    $("chipWhen").innerHTML=`${r.label} · 数据时间 <b>${DATA.generated_at}</b>${DATA.cached?" · 缓存":""}`;
+    $("chipMock").style.display=DATA.mock?"":"none";
+    $("chipStale").style.display=DATA.stale?"":"none";
+    $("chipToday").style.display=DATA.partial_last?"":"none";
+    const qm=DATA.query_ms||{};
+    $("ftQuery").textContent=` 查询耗时：事件 ${(qm.events||0)/1000|0}s · 流量 ${(qm.license_bytes||0)/1000|0}s · 落盘 ${(qm.disk_write||0)/1000|0}s · 磁盘 ${(qm.dbinspect||0)/1000|0}s · 记录范围 ${(qm.record_range||0)/1000|0}s。`;
+    renderFilters();renderAll();
+  }catch(e){
+    toast("加载失败："+e.message);
+  }finally{
+    $("busy").classList.remove("on");
+  }
+}
+
+/* ---------------- CSV export (client-side, respects filters) ---------------- */
+function exportCSV(){
+  if(!DATA)return;
+  const esc=x=>`"${String(x).replace(/"/g,'""')}"`;
+  const lines=[["日期","索引","日志数(条)","摄入(GB)","摄入(KB)","落盘(GB)","落盘(KB)"].map(esc).join(",")];
+  for(const i of visible()){
+    const c=DATA.counts[i]||[],g=DATA.gbs[i]||[],w=DATA.disk_write[i]||[];
+    DATA.dates.forEach((dt,di)=>lines.push([dt,i,c[di]??0,(g[di]??0).toFixed(6),(g[di]*1048576||0).toFixed(1),(w[di]??0).toFixed(6),(w[di]*1048576||0).toFixed(1)].map(esc).join(",")));
+  }
+  const blob=new Blob(["\ufeff"+lines.join("\r\n")],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=`splunk_traffic_${(CUR?CUR.label:"range").replace(/[^\w\u4e00-\u9fa5]+/g,"_")}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();URL.revokeObjectURL(a.href);
+}
+
+/* ---------------- wire up ---------------- */
+["chartIngest","chartPie","chartCount","chartWrite","chartHeat","chartDiskNow"].forEach(id=>mkChart(id));
+$("segRange").querySelectorAll("button").forEach(b=>b.onclick=()=>{
+  $("segRange").querySelectorAll("button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on");
+  if(b.dataset.r==="custom"){
+    $("customPick").style.display="inline-flex";
+    if(!$("dFrom").value){
+      const t=tsDate(Date.now()/1000),s=tsDate(Date.now()/1000-29*86400);
+      $("dFrom").value=s;$("dTo").value=t;
+    }
+    return;
+  }
+  $("customPick").style.display="none";
+  const r=rangeFor(b.dataset.r);
+  if(r)loadRange(r,false);
+});
+$("dApply").onclick=()=>{
+  const f=$("dFrom").value,t=$("dTo").value;
+  if(!f||!t){toast("请选择起止日期");return}
+  const from=new Date(f+"T00:00:00").getTime()/1000;
+  const to=new Date(t+"T00:00:00").getTime()/1000+86399;
+  if(to<=from){toast("结束日期需不早于开始日期");return}
+  loadRange({kind:"custom",from,to,label:`${f} ~ ${t}`},false);
+};
+$("idxBtn").onclick=e=>{e.stopPropagation();const p=$("idxPanel");p.style.display=p.style.display==="none"?"block":"none"};
+document.addEventListener("click",e=>{if(!e.target.closest(".idxwrap"))$("idxPanel").style.display="none"});
+$("idxAll").onclick=()=>{sel=new Set(DATA.indexes);renderFilters();renderAll()};
+$("idxNone").onclick=()=>{sel=new Set([DATA.indexes[0]]);renderFilters();renderAll()};
+$("btnRefresh").onclick=()=>loadRange(CUR.kind==="custom"?CUR:rangeFor(CUR.kind),true);
+$("btnCsv").onclick=exportCSV;
+let rz;window.onresize=()=>{clearTimeout(rz);rz=setTimeout(()=>Object.values(charts).forEach(c=>c.resize()),120)};
+setInterval(()=>{if(!CUR)return;const r=CUR.kind==="custom"?CUR:rangeFor(CUR.kind);if(r)loadRange(r,false)},5*60*1000);
+
+/* ---------------- config: setup wizard + settings ---------------- */
+let CFG=null;
+const isLocked=k=>(CFG&&CFG.locked||[]).includes(k);
+function lockIf(inp,k){if(isLocked(k)){inp.disabled=true;inp.title="该值来自 .env / 环境变量，优先于页面设置；如需修改请先从 .env 中删除对应条目"}}
+async function apiPost(url,body){
+  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.detail||("HTTP "+r.status));
+  return d}
+function connPayload(rootId,urlId,tokId,usrId,pwdId,verId){
+  const mode=($(rootId).querySelector(".atab.on")||{}).dataset?.m||"token";
+  const p={splunk_url:$(urlId).value.trim(),verify_certs:$(verId).checked};
+  const t=$(tokId).value.trim(),u=$(usrId).value.trim(),pw=$(pwdId).value.trim();
+  if(mode==="token"){if(t)p.splunk_token=t}
+  else{if(u)p.splunk_username=u;if(pw)p.splunk_password=pw}
+  return p}
+async function doTest(vals,msgEl,btn){
+  msgEl.textContent="测试中…";msgEl.className="tmsg";if(btn)btn.disabled=true;
+  try{
+    const d=await apiPost("/api/config/test",vals);
+    if(d.ok){msgEl.innerHTML="✅ "+d.message;msgEl.className="tmsg ok";return true}
+    msgEl.innerHTML="❌ "+d.message;msgEl.className="tmsg bad";return false;
+  }catch(e){msgEl.innerHTML="❌ "+e.message;msgEl.className="tmsg bad";return false}
+  finally{if(btn)btn.disabled=false}}
+function renderIdxChips(box,all,selSet){
+  box.innerHTML=all.length?all.map(i=>`<span class="chipx ${selSet.has(i)?"on":""}" data-i="${i}"><span class="dot" style="background:${colorOf(i)}"></span>${i}</span>`).join(""):`<span class="fhint">列表为空</span>`;
+  box.querySelectorAll(".chipx").forEach(el=>el.onclick=()=>{
+    const i=el.dataset.i;
+    selSet.has(i)?selSet.delete(i):selSet.add(i);
+    renderIdxChips(box,all,selSet)})}
+async function doDiscover(vals,box,selSet,msgEl,btn){
+  msgEl.textContent="加载中…";msgEl.className="tmsg";if(btn)btn.disabled=true;
+  try{
+    const d=await apiPost("/api/indexes/discover",vals);
+    if(!d.ok){msgEl.innerHTML="❌ "+d.message;msgEl.className="tmsg bad";return null}
+    renderIdxChips(box,d.indexes,selSet);
+    msgEl.innerHTML=`✅ 共 ${d.indexes.length} 个索引（不含内部 _* 索引），点击勾选`;
+    msgEl.className="tmsg ok";
+    return d.indexes;
+  }catch(e){msgEl.innerHTML="❌ "+e.message;msgEl.className="tmsg bad";return null}
+  finally{if(btn)btn.disabled=false}}
+function wireAuthTabs(rootId){
+  $(rootId).querySelectorAll(".atab").forEach(b=>b.onclick=()=>{
+    $(rootId).querySelectorAll(".atab").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on");
+    $(rootId).querySelectorAll(".apane").forEach(p=>p.style.display=p.dataset.m===b.dataset.m?"":"none")})}
+function idxMode(name){return document.querySelector(`input[name="${name}"]:checked`).value}
+function manualAdd(manualEl,allArr,selSet,box){
+  manualEl.value.split(/[,\s]+/).map(s=>s.trim()).filter(Boolean).forEach(i=>{
+    if(!allArr.includes(i))allArr.push(i);
+    selSet.add(i)});
+  manualEl.value="";
+  renderIdxChips(box,allArr,selSet)}
+
+/* ---- wizard ---- */
+let wizOk=false,wizAll=[],wizIdx=new Set();
+const showSetup=on=>$("setupMask").style.display=on?"flex":"none";
+function wizStep(n){
+  document.querySelectorAll("#setupMask .wstep").forEach(s=>s.classList.toggle("on",s.dataset.s===String(n)));
+  document.querySelectorAll("#setupMask .steps .st").forEach(s=>s.classList.toggle("on",+s.dataset.s<=n));
+  if(n===3&&!wizAll.length)$("wizIdxMsg").textContent="尚未加载列表：可选择“全部非内部索引”，或点击加载"}
+function wireWizard(){
+  document.querySelectorAll("#setupMask [data-next]").forEach(b=>b.onclick=()=>wizStep(+b.dataset.next));
+  document.querySelectorAll("#setupMask [data-prev]").forEach(b=>b.onclick=()=>wizStep(+b.dataset.prev));
+  wireAuthTabs("wizAuth");
+  lockIf($("wizUrl"),"splunk_url");lockIf($("wizToken"),"splunk_token");
+  lockIf($("wizUser"),"splunk_username");lockIf($("wizPass"),"splunk_password");
+  $("wizTest").onclick=async()=>{
+    wizOk=await doTest(connPayload("wizAuth","wizUrl","wizToken","wizUser","wizPass","wizVerify"),$("wizTestMsg"),$("wizTest"));
+    $("wizNext3").disabled=!wizOk};
+  $("wizNext3").onclick=()=>wizStep(3);
+  $("wizLoadIdx").onclick=async()=>{
+    const vals=connPayload("wizAuth","wizUrl","wizToken","wizUser","wizPass","wizVerify");
+    wizAll=await doDiscover(vals,$("wizIdxChips"),wizIdx,$("wizIdxMsg"),$("wizLoadIdx"))||wizAll;
+    if(wizAll.length){$("wizIdxBox").style.display="block";
+      document.querySelector('input[name="wizIdxMode"][value="manual"]').checked=true}};
+  $("wizIdxAll").onclick=()=>{wizIdx=new Set(wizAll);renderIdxChips($("wizIdxChips"),wizAll,wizIdx)};
+  $("wizIdxNone").onclick=()=>{wizIdx.clear();renderIdxChips($("wizIdxChips"),wizAll,wizIdx)};
+  $("wizManualAdd").onclick=()=>manualAdd($("wizManual"),wizAll,wizIdx,$("wizIdxChips"));
+  $("wizSave").onclick=async()=>{
+    const mode=idxMode("wizIdxMode");
+    if(mode==="manual"&&!wizIdx.size){toast("请至少勾选一个索引，或改选“全部非内部索引”");return}
+    const p=connPayload("wizAuth","wizUrl","wizToken","wizUser","wizPass","wizVerify");
+    p.indexes=mode==="manual"?[...wizIdx]:[];
+    try{
+      const d=await apiPost("/api/config",p);
+      toast(d.restart_required?"✅ 已保存；监听地址/端口有变化，重启服务后生效":"✅ 配置已保存，正在载入看板…");
+      setTimeout(()=>location.reload(),600);
+    }catch(e){toast("保存失败："+e.message)}};
+  $("wizDemo").onclick=()=>{showSetup(false);toast("当前为演示数据模式，可随时点击右上角 ⚙ 设置完成配置")};
+  $("setupClose").onclick=()=>{
+    showSetup(false);
+    if(CFG&&!CFG.configured)toast("尚未配置 Splunk：当前为演示数据，点击右上角 ⚙ 设置可随时完成配置")};
+}
+
+/* ---- settings ---- */
+let setAll=[],setIdx=new Set();
+const showSet=on=>$("setMask").style.display=on?"flex":"none";
+function openSettings(){
+  if(!CFG)return;
+  $("setUrl").value=CFG.splunk_url||"";
+  $("setVerify").checked=!!CFG.verify_certs;
+  $("setTokenHint").textContent=CFG.has_splunk_token?`已配置 ${CFG.splunk_token} · 留空保持不变`:"未设置";
+  $("setToken").value="";$("setUser").value=CFG.splunk_username||"";$("setPass").value="";
+  $("setUser").placeholder=CFG.splunk_username?"":"有搜索权限的账号";
+  const basic=CFG.splunk_username||(!CFG.has_splunk_token&&CFG.has_splunk_password);
+  $("setAuth").querySelectorAll(".atab").forEach(b=>b.classList.toggle("on",(b.dataset.m==="basic")===!!basic));
+  $("setAuth").querySelectorAll(".apane").forEach(p=>p.style.display=(p.dataset.m==="basic")===!!basic?"":"none");
+  $("setTtl").value=CFG.cache_ttl;
+  $("setMock").checked=!!CFG.mock;
+  $("setHostPort").value=`${CFG.host}:${CFG.port}（修改：.env 中 DASHBOARD_HOST / DASHBOARD_PORT）`;
+  $("setTestMsg").textContent="";$("setIdxMsg").textContent="";
+  lockIf($("setUrl"),"splunk_url");lockIf($("setToken"),"splunk_token");
+  lockIf($("setUser"),"splunk_username");lockIf($("setPass"),"splunk_password");
+  lockIf($("setTtl"),"cache_ttl");lockIf($("setMock"),"mock");
+  setAll=(CFG.indexes||[]).slice();setIdx=new Set(CFG.indexes||[]);
+  document.querySelector(`input[name="setIdxMode"][value="${setAll.length?"manual":"auto"}"]`).checked=true;
+  $("setIdxBox").style.display="block";
+  renderIdxChips($("setIdxChips"),setAll,setIdx);
+  showSet(true)}
+function wireSettings(){
+  $("btnSettings").onclick=openSettings;
+  $("setClose").onclick=()=>showSet(false);
+  $("setMask").onclick=e=>{if(e.target===$("setMask"))showSet(false)};
+  $("setupMask").onclick=e=>{if(e.target===$("setupMask"))showSetup(false)};
+  $("setCancel").onclick=()=>showSet(false);
+  wireAuthTabs("setAuth");
+  $("setTest").onclick=()=>doTest(connPayload("setAuth","setUrl","setToken","setUser","setPass","setVerify"),$("setTestMsg"),$("setTest"));
+  $("setLoadIdx").onclick=async()=>{
+    const vals=connPayload("setAuth","setUrl","setToken","setUser","setPass","setVerify");
+    const got=await doDiscover(vals,$("setIdxChips"),setIdx,$("setIdxMsg"),$("setLoadIdx"));
+    if(got){setAll=got;document.querySelector('input[name="setIdxMode"][value="manual"]').checked=true}};
+  $("setIdxAll").onclick=()=>{setIdx=new Set(setAll);renderIdxChips($("setIdxChips"),setAll,setIdx)};
+  $("setIdxNone").onclick=()=>{setIdx.clear();renderIdxChips($("setIdxChips"),setAll,setIdx)};
+  $("setManualAdd").onclick=()=>manualAdd($("setManual"),setAll,setIdx,$("setIdxChips"));
+  $("setRewiz").onclick=()=>{showSet(false);wizStep(1);showSetup(true)};
+  $("setSave").onclick=async()=>{
+    const mode=idxMode("setIdxMode");
+    if(mode==="manual"&&!setIdx.size){toast("请至少勾选一个索引，或改选“全部非内部索引”");return}
+    const p=connPayload("setAuth","setUrl","setToken","setUser","setPass","setVerify");
+    p.indexes=mode==="manual"?[...setIdx]:[];
+    if(!isLocked("cache_ttl"))p.cache_ttl=parseInt($("setTtl").value,10);
+    if(!isLocked("mock"))p.mock=$("setMock").checked;
+    try{
+      const d=await apiPost("/api/config",p);
+      CFG=d.config;
+      showSet(false);
+      toast(d.restart_required?"✅ 已保存；监听地址/端口有变化，重启服务后生效":"✅ 设置已保存");
+      if(CUR){const r=CUR.kind==="custom"?CUR:rangeFor(CUR.kind);if(r)loadRange(r,true)}
+    }catch(e){toast("保存失败："+e.message)}}}
+
+/* ---- boot ---- */
+async function boot(){
+  try{CFG=await(await fetch("/api/config")).json()}
+  catch(e){CFG={configured:false,mock:false,locked:[]}}
+  wireWizard();wireSettings();
+  if(!CFG.configured&&!CFG.mock)showSetup(true);
+  if(location.hash==="#setup"){wizStep(1);showSetup(true)}   // deep-link: 重新运行向导
+  if(location.hash==="#settings")openSettings();             // deep-link: 直接打开设置
+}
+loadRange(rangeFor("30"),false);
+boot();
+</script>
+</body>
+</html>

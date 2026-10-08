@@ -1,0 +1,15 @@
+# local secrets / runtime state
+.env
+config.json
+traffic_dashboard/cache.json
+traffic_dashboard/*.tmp
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# logs & os noise
+*.log
+.DS_Store
+Thumbs.db
